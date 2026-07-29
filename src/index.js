@@ -3,6 +3,7 @@ const express = require("express");
 const whatsapp = require("./whatsapp");
 const ai = require("./ai");
 const store = require("./store");
+const arboxMonitor = require("./arbox-monitor");
 
 const RESET_COMMANDS = ["איפוס שיחה", "אפס שיחה", "תאפס שיחה", "reset chat"];
 const ADMIN_PHONE = process.env.ADMIN_PHONE;
@@ -90,3 +91,5 @@ app.post("/webhook", async (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`WhatsApp bot listening on port ${port}`));
+
+arboxMonitor.startMonitoring();

@@ -35,4 +35,20 @@ function getTasks(params = {}) {
   return arboxRequest(`/v3/tasks${query ? `?${query}` : ""}`);
 }
 
-module.exports = { getLocations, getLeads, getReport, getTasks };
+function getStaffMembers() {
+  return arboxRequest("/v3/users/allStaffMembers");
+}
+
+function getSchedule(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  return arboxRequest(`/v3/schedule${query ? `?${query}` : ""}`);
+}
+
+function updateScheduleStaff(scheduleId, staffMemberId) {
+  return arboxRequest("/v3/schedule", {
+    method: "PATCH",
+    body: JSON.stringify({ schedule_id: scheduleId, staff_member_id: staffMemberId }),
+  });
+}
+
+module.exports = { getLocations, getLeads, getReport, getTasks, getStaffMembers, getSchedule, updateScheduleStaff };

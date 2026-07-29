@@ -6,6 +6,7 @@ const CONVERSATIONS_FILE = path.join(DATA_DIR, "conversations.json");
 const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const TICKETS_FILE = path.join(DATA_DIR, "tickets.json");
 const ADMIN_NOTES_FILE = path.join(DATA_DIR, "admin-notes.json");
+const ARBOX_STATE_FILE = path.join(DATA_DIR, "arbox-state.json");
 
 function ensureFile(file, defaultValue) {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -66,6 +67,14 @@ function addAdminNote(text) {
   return entry;
 }
 
+function getArboxState() {
+  return readJson(ARBOX_STATE_FILE, { lastLeadCheckTime: null });
+}
+
+function setArboxState(state) {
+  writeJson(ARBOX_STATE_FILE, state);
+}
+
 module.exports = {
   getConversation,
   saveConversation,
@@ -74,4 +83,6 @@ module.exports = {
   addTicket,
   getAdminNotes,
   addAdminNote,
+  getArboxState,
+  setArboxState,
 };
