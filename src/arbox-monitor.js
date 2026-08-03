@@ -4,6 +4,12 @@ const store = require("./store");
 
 const ADMIN_PHONE = process.env.ADMIN_PHONE;
 
+// Safety gate: the checks below this point message real customers directly
+// (not just Nadav). They must never fire just because the server restarted -
+// only when explicitly turned on in .env, after Nadav has reviewed and
+// approved the templates.
+const CUSTOMER_AUTOMATIONS_ENABLED = process.env.ENABLE_CUSTOMER_AUTOMATIONS === "true";
+
 function formatLeadAlert(lead) {
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "(ללא שם)";
   const phone = lead.phone || "לא צוין טלפון";
@@ -143,7 +149,7 @@ const BIRTHDAY_HOUR = 10; // sends once, the first time the monitor runs at/afte
 const BIRTHDAY_TEMPLATES = ["birthday_greeting_1", "birthday_greeting_2", "birthday_greeting_3"];
 
 async function checkBirthdays() {
-  if (!process.env.ARBOX_API_KEY) return;
+  if (!CUSTOMER_AUTOMATIONS_ENABLED || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
   const today = new Date().toISOString().slice(0, 10);
@@ -163,7 +169,7 @@ async function checkBirthdays() {
 }
 
 async function checkFailedPayments() {
-  if (!process.env.ARBOX_API_KEY) return;
+  if (!CUSTOMER_AUTOMATIONS_ENABLED || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
   const notifiedKeys = new Set(state.notifiedFailedPaymentKeys || []);
@@ -203,7 +209,7 @@ async function checkFailedPayments() {
 }
 
 async function checkNewMembers() {
-  if (!process.env.ARBOX_API_KEY) return;
+  if (!CUSTOMER_AUTOMATIONS_ENABLED || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
   const isFirstRun = state.lastConvertedUserId === undefined;
@@ -227,7 +233,7 @@ async function checkNewMembers() {
 }
 
 async function checkLostLeads() {
-  if (!process.env.ARBOX_API_KEY) return;
+  if (!CUSTOMER_AUTOMATIONS_ENABLED || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
   const isFirstRun = state.lastLostUserId === undefined;

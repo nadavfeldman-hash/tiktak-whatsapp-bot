@@ -34,6 +34,16 @@ app.post("/webhook", async (req, res) => {
 
   let incoming;
   try {
+    const statuses = req.body?.entry?.[0]?.changes?.[0]?.value?.statuses;
+    if (statuses) {
+      for (const s of statuses) {
+        console.log(
+          `Message status: id=${s.id} status=${s.status} to=${s.recipient_id}` +
+            (s.errors ? ` errors=${JSON.stringify(s.errors)}` : "")
+        );
+      }
+    }
+
     incoming = whatsapp.extractIncomingText(req.body);
     if (!incoming) return; // status update or other non-message event
 
