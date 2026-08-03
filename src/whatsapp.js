@@ -26,6 +26,39 @@ async function sendText(to, body) {
   return res;
 }
 
+// Sends an approved message template - the only way to reach someone who
+// hasn't messaged us in the last 24h (WhatsApp blocks free-form text outside
+// that window). `params` are plain strings filled into the template's {{1}},
+// {{2}}, ... slots in order.
+async function sendTemplate(to, templateName, params = []) {
+  const res = await fetch(apiUrl(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: "he" },
+        components:
+          params.length > 0
+            ? [{ type: "body", parameters: params.map((text) => ({ type: "text", text: String(text) })) }]
+            : [],
+      },
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("WhatsApp template send failed:", res.status, errText);
+    throw new Error(`WhatsApp template send failed: ${res.status} ${errText}`);
+  }
+  return res;
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Sends each non-empty line as its own WhatsApp message, with a short pause
@@ -67,4 +100,4 @@ function extractIncomingText(body) {
   return { from: message.from, id: message.id, text: message.text.body };
 }
 
-module.exports = { sendText, sendBurst, markAsRead, extractIncomingText };
+module.exports = { sendText, sendTemplate, sendBurst, markAsRead, extractIncomingText };

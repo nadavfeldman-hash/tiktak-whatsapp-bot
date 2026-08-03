@@ -139,12 +139,127 @@ async function checkDueTasks() {
   }
 }
 
+const BIRTHDAY_HOUR = 10; // sends once, the first time the monitor runs at/after this local hour each day
+const BIRTHDAY_TEMPLATES = ["birthday_greeting_1", "birthday_greeting_2", "birthday_greeting_3"];
+
+async function checkBirthdays() {
+  if (!process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const today = new Date().toISOString().slice(0, 10);
+  const currentHour = new Date().getHours();
+
+  if (state.lastBirthdayCheckDate === today || currentHour < BIRTHDAY_HOUR) return;
+
+  const result = await arbox.getReport("birthdayReport", { fromDate: today, toDate: today, limit: 200 });
+  const people = (result.data || []).filter((p) => p.phone && p.allow_sms !== "no");
+
+  for (const person of people) {
+    const template = BIRTHDAY_TEMPLATES[Math.floor(Math.random() * BIRTHDAY_TEMPLATES.length)];
+    await whatsapp.sendTemplate(person.phone.replace("+", ""), template, [person.first_name]);
+  }
+
+  store.setArboxState({ ...state, lastBirthdayCheckDate: today });
+}
+
+async function checkFailedPayments() {
+  if (!process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const notifiedKeys = new Set(state.notifiedFailedPaymentKeys || []);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const from = new Date();
+  from.setDate(from.getDate() - 2);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  const result = await arbox.getReport("transactionsReport", { fromDate: fmt(from), toDate: today, limit: 200 });
+  const failed = result.data || [];
+
+  // One reminder per customer per day, even if their payment retried and failed
+  // several times - not one message per failed attempt.
+  const seenThisRun = new Set();
+  for (const t of failed) {
+    if (t.status !== "FAIL") continue;
+    const key = `${t.user_id}:${today}`;
+    if (notifiedKeys.has(key) || seenThisRun.has(key)) continue;
+    seenThisRun.add(key);
+
+    try {
+      const user = await arbox.getUser(t.user_id);
+      const phone = user.data?.phone;
+      if (phone) {
+        await whatsapp.sendTemplate(phone.replace("+", ""), "failed_payment_reminder", [t.first_name]);
+      }
+    } catch (e) {
+      console.error("Failed to notify about failed payment", t.transaction_id, e.message);
+    }
+    notifiedKeys.add(key);
+  }
+
+  if (seenThisRun.size > 0) {
+    store.setArboxState({ ...state, notifiedFailedPaymentKeys: Array.from(notifiedKeys) });
+  }
+}
+
+async function checkNewMembers() {
+  if (!process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const isFirstRun = state.lastConvertedUserId === undefined;
+  const lastSeenId = state.lastConvertedUserId || 0;
+
+  const result = await arbox.getConvertedLeads({ limit: 50 });
+  const converted = result.data || [];
+
+  const newOnes = converted.filter((c) => c.user_id > lastSeenId);
+  const maxId = converted.reduce((max, c) => Math.max(max, c.user_id), lastSeenId);
+
+  if (!isFirstRun) {
+    for (const c of newOnes) {
+      if (c.phone) {
+        await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member", [c.first_name]);
+      }
+    }
+  }
+
+  store.setArboxState({ ...state, lastConvertedUserId: maxId });
+}
+
+async function checkLostLeads() {
+  if (!process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const isFirstRun = state.lastLostUserId === undefined;
+  const lastSeenId = state.lastLostUserId || 0;
+
+  const result = await arbox.getLostLeads({ limit: 50 });
+  const lost = result.data || [];
+
+  const newOnes = lost.filter((c) => c.user_id > lastSeenId);
+  const maxId = lost.reduce((max, c) => Math.max(max, c.user_id), lastSeenId);
+
+  if (!isFirstRun) {
+    for (const c of newOnes) {
+      if (c.phone) {
+        await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye", [c.first_name]);
+      }
+    }
+  }
+
+  store.setArboxState({ ...state, lastLostUserId: maxId });
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
     checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
     checkDebtReport().catch((e) => console.error("Arbox monitor (debt) error:", e.message));
     checkAttendanceReport().catch((e) => console.error("Arbox monitor (attendance) error:", e.message));
     checkDueTasks().catch((e) => console.error("Arbox monitor (tasks) error:", e.message));
+    checkBirthdays().catch((e) => console.error("Arbox monitor (birthdays) error:", e.message));
+    checkFailedPayments().catch((e) => console.error("Arbox monitor (failed payments) error:", e.message));
+    checkNewMembers().catch((e) => console.error("Arbox monitor (new members) error:", e.message));
+    checkLostLeads().catch((e) => console.error("Arbox monitor (lost leads) error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);
@@ -156,4 +271,8 @@ module.exports = {
   checkDebtReport,
   checkAttendanceReport,
   checkDueTasks,
+  checkBirthdays,
+  checkFailedPayments,
+  checkNewMembers,
+  checkLostLeads,
 };

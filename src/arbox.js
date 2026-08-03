@@ -51,4 +51,29 @@ function updateScheduleStaff(scheduleId, staffMemberId) {
   });
 }
 
-module.exports = { getLocations, getLeads, getReport, getTasks, getStaffMembers, getSchedule, updateScheduleStaff };
+function getConvertedLeads(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  return arboxRequest(`/v3/leads/converted${query ? `?${query}` : ""}`);
+}
+
+function getLostLeads(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  return arboxRequest(`/v3/leads/lost${query ? `?${query}` : ""}`);
+}
+
+function getUser(userId) {
+  return arboxRequest(`/v3/users/${userId}`);
+}
+
+module.exports = {
+  getLocations,
+  getLeads,
+  getReport,
+  getTasks,
+  getStaffMembers,
+  getSchedule,
+  updateScheduleStaff,
+  getConvertedLeads,
+  getLostLeads,
+  getUser,
+};
