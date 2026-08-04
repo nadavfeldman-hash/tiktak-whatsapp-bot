@@ -4,6 +4,7 @@ const whatsapp = require("./whatsapp");
 const ai = require("./ai");
 const store = require("./store");
 const arboxMonitor = require("./arbox-monitor");
+const adminPanel = require("./admin");
 
 const RESET_COMMANDS = ["איפוס שיחה", "אפס שיחה", "תאפס שיחה", "reset chat"];
 const ADMIN_PHONE = process.env.ADMIN_PHONE;
@@ -14,6 +15,8 @@ const app = express();
 app.use(express.json());
 
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+app.use("/admin", adminPanel);
 
 // Meta calls this once to verify the webhook URL you register.
 app.get("/webhook", (req, res) => {

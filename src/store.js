@@ -7,6 +7,7 @@ const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const TICKETS_FILE = path.join(DATA_DIR, "tickets.json");
 const ADMIN_NOTES_FILE = path.join(DATA_DIR, "admin-notes.json");
 const ARBOX_STATE_FILE = path.join(DATA_DIR, "arbox-state.json");
+const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 
 function ensureFile(file, defaultValue) {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -75,6 +76,29 @@ function setArboxState(state) {
   writeJson(ARBOX_STATE_FILE, state);
 }
 
+function getAppointments() {
+  return readJson(APPOINTMENTS_FILE, []);
+}
+
+function getTickets() {
+  return readJson(TICKETS_FILE, []);
+}
+
+function getAllConversations() {
+  return readJson(CONVERSATIONS_FILE, {});
+}
+
+function getSettings() {
+  return readJson(SETTINGS_FILE, { customerAutomationsEnabled: false });
+}
+
+function setSetting(key, value) {
+  const settings = getSettings();
+  settings[key] = value;
+  writeJson(SETTINGS_FILE, settings);
+  return settings;
+}
+
 module.exports = {
   getConversation,
   saveConversation,
@@ -85,4 +109,9 @@ module.exports = {
   addAdminNote,
   getArboxState,
   setArboxState,
+  getAppointments,
+  getTickets,
+  getAllConversations,
+  getSettings,
+  setSetting,
 };
