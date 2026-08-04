@@ -26,29 +26,152 @@ function requireAuth(req, res, next) {
   res.redirect("/admin");
 }
 
-function layout(title, body) {
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function timeAgo(isoOrDateStr) {
+  if (!isoOrDateStr) return "-";
+  const d = new Date(isoOrDateStr.replace(" ", "T"));
+  if (isNaN(d)) return isoOrDateStr;
+  const diffMs = Date.now() - d.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "עכשיו";
+  if (mins < 60) return `לפני ${mins} דק'`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `לפני ${hours} שע'`;
+  const days = Math.floor(hours / 24);
+  return `לפני ${days} ימים`;
+}
+
+function layout(title, activePage, body) {
+  const navItem = (href, icon, label, key) =>
+    `<a href="${href}" class="nav-item${activePage === key ? " active" : ""}"><span class="nav-icon">${icon}</span><span>${label}</span></a>`;
+
   return `<!doctype html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} - TikTak Bot</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #f5f5f7; margin: 0; padding: 24px; color: #1a1a1a; }
-  h1 { font-size: 20px; }
-  h2 { font-size: 16px; margin-top: 32px; border-bottom: 2px solid #eee; padding-bottom: 6px; }
-  table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; margin-top: 8px; }
-  th, td { text-align: right; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
-  th { background: #fafafa; }
-  .card { background: white; border-radius: 8px; padding: 16px; margin-top: 8px; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
-  .badge.on { background: #d1fae5; color: #065f46; }
-  .badge.off { background: #fee2e2; color: #991b1b; }
-  button { cursor: pointer; border: none; border-radius: 6px; padding: 8px 16px; font-size: 14px; }
-  .btn-primary { background: #2563eb; color: white; }
-  .btn-danger { background: #dc2626; color: white; }
+  :root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --border: #e6e8eb;
+    --text: #16181d;
+    --text-muted: #6b7280;
+    --accent: #ff5a1f;
+    --accent-dark: #e04a15;
+    --accent-soft: #fff1ea;
+    --green: #059669;
+    --green-soft: #e7f9f1;
+    --red: #dc2626;
+    --red-soft: #fdecec;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    background: var(--bg);
+    margin: 0;
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    padding: 20px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 6px 10px 22px; }
+  .brand-logo { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .brand-name { font-weight: 700; font-size: 15px; }
+  .brand-sub { font-size: 11px; color: var(--text-muted); }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; font-size: 14px; color: var(--text-muted); font-weight: 500; }
+  .nav-item:hover { background: var(--bg); color: var(--text); }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent-dark); }
+  .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+  .sidebar-footer { margin-top: auto; padding-top: 12px; }
+
+  /* Main */
+  .main { flex: 1; padding: 26px 32px; max-width: 1180px; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }
+  .page-title { font-size: 22px; font-weight: 700; margin: 0; }
+  .page-sub { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Stat cards */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 26px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
+  .stat-label { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+  .stat-value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .stat-icon { font-size: 18px; float: left; opacity: .7; }
+
+  /* Cards / sections */
+  .section { margin-bottom: 30px; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .section-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .section-count { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .card-pad { padding: 18px 20px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: right; padding: 10px 16px; color: var(--text-muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid var(--border); background: #fafbfc; }
+  td { text-align: right; padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #fafbfc; }
+  .muted { color: var(--text-muted); }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; direction: ltr; text-align: right; unicode-bidi: plaintext; }
+  .empty-state { padding: 34px 20px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
+
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.on { background: var(--green-soft); color: var(--green); }
+  .badge.off { background: var(--red-soft); color: var(--red); }
+  .badge.neutral { background: #f1f2f4; color: var(--text-muted); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: currentColor; }
+
+  button { cursor: pointer; border: none; border-radius: 9px; padding: 8px 16px; font-size: 13.5px; font-weight: 600; transition: opacity .15s; }
+  button:hover { opacity: .88; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-danger { background: var(--red); color: white; }
+  .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  .btn-sm { padding: 5px 11px; font-size: 12.5px; border-radius: 7px; }
   form.inline { display: inline; }
-  input[type=text], input[type=password], textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
-  .top { display: flex; justify-content: space-between; align-items: center; }
+
+  input[type=text], input[type=password], textarea {
+    width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; font-size: 14px;
+    font-family: inherit; background: var(--bg);
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: white; }
+  textarea { resize: vertical; }
+
+  .toggle-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .toggle-desc { font-size: 13px; color: var(--text-muted); margin-top: 2px; max-width: 480px; }
+
+  /* Login page */
+  .login-wrap { min-height: 100vh; width: 100%; display: flex; align-items: center; justify-content: center; }
+  .login-card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); padding: 36px 32px; width: 100%; max-width: 340px; text-align: center; }
+  .login-logo { width: 52px; height: 52px; border-radius: 14px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 26px; margin: 0 auto 14px; }
+
+  @media (max-width: 760px) {
+    body { flex-direction: column; }
+    .sidebar { width: 100%; flex-direction: row; overflow-x: auto; border-left: none; border-bottom: 1px solid var(--border); padding: 10px; }
+    .brand { display: none; }
+    .sidebar-footer { display: none; }
+    .nav-item { flex-shrink: 0; }
+    .main { padding: 18px; }
+    table { font-size: 12.5px; }
+    th, td { padding: 8px 10px; }
+  }
 </style>
 </head>
 <body>
@@ -57,18 +180,46 @@ ${body}
 </html>`;
 }
 
+function sidebar(activePage) {
+  return `<div class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">🥊</div>
+      <div>
+        <div class="brand-name">TikTak Bot</div>
+        <div class="brand-sub">לוח בקרה</div>
+      </div>
+    </div>
+    <a href="/admin/dashboard" class="nav-item${activePage === "dashboard" ? " active" : ""}"><span class="nav-icon">🏠</span><span>סקירה כללית</span></a>
+    <a href="/admin/dashboard#conversations" class="nav-item"><span class="nav-icon">💬</span><span>שיחות</span></a>
+    <a href="/admin/dashboard#appointments" class="nav-item"><span class="nav-icon">📅</span><span>תורים</span></a>
+    <a href="/admin/dashboard#tickets" class="nav-item"><span class="nav-icon">🎫</span><span>פניות</span></a>
+    <a href="/admin/dashboard#notes" class="nav-item"><span class="nav-icon">🧠</span><span>מה הבוט למד</span></a>
+    <a href="/admin/dashboard#automations" class="nav-item"><span class="nav-icon">⚙️</span><span>אוטומציות</span></a>
+    <div class="sidebar-footer">
+      <form method="POST" action="/admin/logout"><button class="btn-ghost" style="width:100%" type="submit">התנתקות</button></form>
+    </div>
+  </div>`;
+}
+
 router.get("/", (req, res) => {
   const cookies = parseCookies(req);
   if (cookies.session && sessions.has(cookies.session)) return res.redirect("/admin/dashboard");
+  const error = req.query.error ? `<div style="color:var(--red);font-size:13px;margin-top:10px;">סיסמה שגויה, נסה שוב</div>` : "";
   res.send(
     layout(
       "התחברות",
-      `<div class="card" style="max-width:320px;margin:80px auto;">
-        <h1>TikTak Bot - כניסה</h1>
-        <form method="POST" action="/admin/login">
-          <input type="password" name="password" placeholder="סיסמה" autofocus />
-          <div style="margin-top:12px;"><button class="btn-primary" type="submit">כניסה</button></div>
-        </form>
+      "",
+      `<div class="login-wrap">
+        <div class="login-card">
+          <div class="login-logo">🥊</div>
+          <div style="font-weight:700;font-size:17px;margin-bottom:2px;">TikTak Bot</div>
+          <div class="muted" style="font-size:13px;margin-bottom:20px;">כניסה ללוח הבקרה</div>
+          <form method="POST" action="/admin/login">
+            <input type="password" name="password" placeholder="סיסמה" autofocus />
+            <div style="margin-top:14px;"><button class="btn-primary" style="width:100%" type="submit">כניסה</button></div>
+          </form>
+          ${error}
+        </div>
       </div>`
     )
   );
@@ -94,13 +245,18 @@ router.post("/logout", requireAuth, (req, res) => {
 router.post("/toggle-automations", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const settings = store.getSettings();
   store.setSetting("customerAutomationsEnabled", !settings.customerAutomationsEnabled);
-  res.redirect("/admin/dashboard");
+  res.redirect("/admin/dashboard#automations");
 });
 
 router.post("/notes/add", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const text = (req.body.text || "").trim();
   if (text) store.addAdminNote(text);
-  res.redirect("/admin/dashboard");
+  res.redirect("/admin/dashboard#notes");
+});
+
+router.post("/reset-conversation", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  if (req.body.phone) store.resetConversation(req.body.phone);
+  res.redirect("/admin/dashboard#conversations");
 });
 
 router.get("/dashboard", requireAuth, async (req, res) => {
@@ -110,101 +266,179 @@ router.get("/dashboard", requireAuth, async (req, res) => {
   const notes = store.getAdminNotes();
   const settings = store.getSettings();
 
-  let arboxSummary = "";
+  let leads = [];
+  let arboxError = null;
   try {
-    const leads = await arbox.getLeads({ limit: 5, sort: "desc" });
-    arboxSummary = leads.data
-      .map((l) => `<tr><td>${l.first_name || ""} ${l.last_name || ""}</td><td>${l.phone || "-"}</td><td>${l.lead_status || "-"}</td><td>${l.created_time || "-"}</td></tr>`)
-      .join("");
+    const result = await arbox.getLeads({ limit: 8, sort: "desc" });
+    leads = result.data || [];
   } catch (e) {
-    arboxSummary = `<tr><td colspan="4">שגיאה בטעינת לידים מ-ARBOX: ${e.message}</td></tr>`;
+    arboxError = e.message;
   }
 
-  const convRows = Object.entries(conversations)
-    .map(([phone, messages]) => {
-      const count = messages.length;
-      const lastMsg = messages[messages.length - 1];
-      let preview = "";
-      if (lastMsg) {
-        if (typeof lastMsg.content === "string") preview = lastMsg.content;
-        else if (Array.isArray(lastMsg.content)) {
-          const textBlock = lastMsg.content.find((b) => b.type === "text");
-          preview = textBlock ? textBlock.text : "(כלי/מדיה)";
-        }
-      }
-      preview = (preview || "").slice(0, 80).replace(/</g, "&lt;");
-      return `<tr><td>${phone}</td><td>${count}</td><td>${preview}</td>
-        <td><form class="inline" method="POST" action="/admin/reset-conversation"><input type="hidden" name="phone" value="${phone}"/><button class="btn-danger" type="submit" onclick="return confirm('לאפס את השיחה עם ${phone}?')">איפוס</button></form></td></tr>`;
-    })
-    .join("");
+  const today = new Date().toISOString().slice(0, 10);
+  const newLeadsToday = leads.filter((l) => (l.created_time || "").startsWith(today)).length;
+  const openTickets = tickets.filter((t) => t.status === "open").length;
+  const convCount = Object.keys(conversations).length;
 
-  const apptRows = appointments
-    .slice(-20)
-    .reverse()
-    .map((a) => `<tr><td>${a.name || "-"}</td><td>${a.phone || "-"}</td><td>${a.date || "-"} ${a.time || ""}</td><td>${a.reason || "-"}</td></tr>`)
-    .join("");
+  const leadRows = leads.length
+    ? leads
+        .map(
+          (l) => `<tr>
+        <td>${esc([l.first_name, l.last_name].filter(Boolean).join(" ") || "(ללא שם)")}</td>
+        <td class="mono">${esc(l.phone) || '<span class="muted">-</span>'}</td>
+        <td><span class="badge neutral">${esc(l.lead_status) || "-"}</span></td>
+        <td class="muted">${esc(l.lead_source) || "-"}</td>
+        <td class="muted">${timeAgo(l.created_time)}</td>
+      </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="5"><div class="empty-state">${arboxError ? `שגיאה בטעינה מ-ARBOX: ${esc(arboxError)}` : "אין לידים להצגה"}</div></td></tr>`;
 
-  const ticketRows = tickets
-    .slice(-20)
-    .reverse()
-    .map((t) => `<tr><td>${t.subject || "-"}</td><td>${t.phone || "-"}</td><td>${t.priority || "-"}</td><td>${t.status || "-"}</td></tr>`)
-    .join("");
+  const convEntries = Object.entries(conversations).sort((a, b) => b[1].length - a[1].length);
+  const convRows = convEntries.length
+    ? convEntries
+        .map(([phone, messages]) => {
+          const count = messages.length;
+          const lastMsg = messages[messages.length - 1];
+          let preview = "";
+          if (lastMsg) {
+            if (typeof lastMsg.content === "string") preview = lastMsg.content;
+            else if (Array.isArray(lastMsg.content)) {
+              const textBlock = lastMsg.content.find((b) => b.type === "text");
+              preview = textBlock ? textBlock.text : "(כלי/מדיה)";
+            }
+          }
+          preview = esc((preview || "").slice(0, 90));
+          return `<tr>
+            <td class="mono">${esc(phone)}</td>
+            <td><span class="badge neutral">${count} הודעות</span></td>
+            <td class="muted">${preview || "-"}</td>
+            <td>
+              <form class="inline" method="POST" action="/admin/reset-conversation">
+                <input type="hidden" name="phone" value="${esc(phone)}"/>
+                <button class="btn-ghost btn-sm" type="submit" onclick="return confirm('לאפס את השיחה עם ${esc(phone)}?')">איפוס</button>
+              </form>
+            </td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="4"><div class="empty-state">אין עדיין שיחות</div></td></tr>`;
 
-  const noteRows = notes
-    .slice()
-    .reverse()
-    .map((n) => `<tr><td>${new Date(n.addedAt).toLocaleString("he-IL")}</td><td>${n.text}</td></tr>`)
-    .join("");
+  const apptRows = appointments.length
+    ? appointments
+        .slice(-20)
+        .reverse()
+        .map(
+          (a) => `<tr>
+        <td>${esc(a.name) || "-"}</td>
+        <td class="mono">${esc(a.phone) || "-"}</td>
+        <td>${esc(a.date) || "-"} ${esc(a.time) || ""}</td>
+        <td class="muted">${esc(a.reason) || "-"}</td>
+      </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="4"><div class="empty-state">אין עדיין תורים שנקבעו</div></td></tr>`;
+
+  const ticketRows = tickets.length
+    ? tickets
+        .slice(-20)
+        .reverse()
+        .map((t) => {
+          const prioClass = t.priority === "high" ? "off" : t.priority === "low" ? "neutral" : "on";
+          return `<tr>
+        <td>${esc(t.subject) || "-"}</td>
+        <td class="mono">${esc(t.phone) || "-"}</td>
+        <td><span class="badge ${prioClass}">${esc(t.priority) || "-"}</span></td>
+        <td><span class="badge ${t.status === "open" ? "off" : "neutral"}">${esc(t.status) || "-"}</span></td>
+      </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="4"><div class="empty-state">אין פניות תמיכה</div></td></tr>`;
+
+  const noteRows = notes.length
+    ? notes
+        .slice()
+        .reverse()
+        .map(
+          (n) => `<tr>
+        <td class="muted" style="white-space:nowrap;">${new Date(n.addedAt).toLocaleDateString("he-IL")}</td>
+        <td>${esc(n.text)}</td>
+      </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="2"><div class="empty-state">עדיין לא נלמדו עדכונים</div></td></tr>`;
 
   const automationsOn = !!settings.customerAutomationsEnabled;
 
   res.send(
     layout(
-      "לוח בקרה",
-      `<div class="top">
-        <h1>TikTak Bot - לוח בקרה</h1>
-        <form method="POST" action="/admin/logout"><button type="submit">התנתקות</button></form>
-      </div>
-
-      <div class="card">
-        <div class="top">
-          <div>אוטומציות ללקוחות (ימי הולדת, תשלום שנכשל, לידים):
-            <span class="badge ${automationsOn ? "on" : "off"}">${automationsOn ? "פעיל" : "כבוי"}</span>
+      "סקירה כללית",
+      "dashboard",
+      `${sidebar("dashboard")}
+      <div class="main">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">היי נדב 👋</h1>
+            <div class="page-sub">ככה נראה המצב אצל TikTak Fit עכשיו</div>
           </div>
-          <form method="POST" action="/admin/toggle-automations">
-            <button class="${automationsOn ? "btn-danger" : "btn-primary"}" type="submit">${automationsOn ? "כבה" : "הדלק"}</button>
-          </form>
+          <span class="badge ${automationsOn ? "on" : "off"}"><span class="dot"></span>אוטומציות ללקוחות: ${automationsOn ? "פעיל" : "כבוי"}</span>
         </div>
-      </div>
 
-      <h2>לידים אחרונים מ-ARBOX</h2>
-      <table><tr><th>שם</th><th>טלפון</th><th>סטטוס</th><th>נוצר</th></tr>${arboxSummary}</table>
+        <div class="stats-grid">
+          <div class="stat-card"><div class="stat-icon">💬</div><div class="stat-label">שיחות פעילות</div><div class="stat-value">${convCount}</div></div>
+          <div class="stat-card"><div class="stat-icon">✨</div><div class="stat-label">לידים חדשים היום</div><div class="stat-value">${newLeadsToday}</div></div>
+          <div class="stat-card"><div class="stat-icon">📅</div><div class="stat-label">תורים שנקבעו</div><div class="stat-value">${appointments.length}</div></div>
+          <div class="stat-card"><div class="stat-icon">🎫</div><div class="stat-label">פניות פתוחות</div><div class="stat-value">${openTickets}</div></div>
+        </div>
 
-      <h2>שיחות וואטסאפ (${Object.keys(conversations).length})</h2>
-      <table><tr><th>טלפון</th><th>מס' הודעות</th><th>הודעה אחרונה</th><th></th></tr>${convRows}</table>
+        <div class="section" id="leads">
+          <div class="section-header"><div class="section-title">✨ לידים אחרונים מ-ARBOX</div></div>
+          <div class="card"><table><tr><th>שם</th><th>טלפון</th><th>סטטוס</th><th>מקור</th><th>נוצר</th></tr>${leadRows}</table></div>
+        </div>
 
-      <h2>תורים שנקבעו (20 אחרונים)</h2>
-      <table><tr><th>שם</th><th>טלפון</th><th>תאריך/שעה</th><th>סיבה</th></tr>${apptRows}</table>
+        <div class="section" id="conversations">
+          <div class="section-header"><div class="section-title">💬 שיחות וואטסאפ</div><div class="section-count">${convCount} סה"כ</div></div>
+          <div class="card"><table><tr><th>טלפון</th><th>הודעות</th><th>הודעה אחרונה</th><th></th></tr>${convRows}</table></div>
+        </div>
 
-      <h2>פניות תמיכה (20 אחרונות)</h2>
-      <table><tr><th>נושא</th><th>טלפון</th><th>עדיפות</th><th>סטטוס</th></tr>${ticketRows}</table>
+        <div class="section" id="appointments">
+          <div class="section-header"><div class="section-title">📅 תורים שנקבעו</div><div class="section-count">20 אחרונים</div></div>
+          <div class="card"><table><tr><th>שם</th><th>טלפון</th><th>תאריך/שעה</th><th>סיבה</th></tr>${apptRows}</table></div>
+        </div>
 
-      <h2>עדכונים שנלמדו לבוט</h2>
-      <table><tr><th>תאריך</th><th>טקסט</th></tr>${noteRows}</table>
-      <div class="card">
-        <form method="POST" action="/admin/notes/add">
-          <textarea name="text" rows="2" placeholder="עדכון חדש לבוט..."></textarea>
-          <div style="margin-top:8px;"><button class="btn-primary" type="submit">הוסף</button></div>
-        </form>
-      </div>
-      `
+        <div class="section" id="tickets">
+          <div class="section-header"><div class="section-title">🎫 פניות תמיכה</div><div class="section-count">20 אחרונות</div></div>
+          <div class="card"><table><tr><th>נושא</th><th>טלפון</th><th>עדיפות</th><th>סטטוס</th></tr>${ticketRows}</table></div>
+        </div>
+
+        <div class="section" id="notes">
+          <div class="section-header"><div class="section-title">🧠 מה הבוט למד ממך</div><div class="section-count">${notes.length} עדכונים</div></div>
+          <div class="card">
+            <table><tr><th style="width:110px">תאריך</th><th>עדכון</th></tr>${noteRows}</table>
+            <div class="card-pad" style="border-top:1px solid var(--border);">
+              <form method="POST" action="/admin/notes/add">
+                <textarea name="text" rows="2" placeholder="לדוגמה: מעכשיו אל תציע חודש ניסיון, רק אימון בודד..."></textarea>
+                <div style="margin-top:10px;"><button class="btn-primary" type="submit">שמור עדכון חדש</button></div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" id="automations">
+          <div class="section-header"><div class="section-title">⚙️ אוטומציות ללקוחות</div></div>
+          <div class="card card-pad toggle-row">
+            <div>
+              <div style="font-weight:600;">ימי הולדת, תשלום שנכשל, ליד חדש/אבוד</div>
+              <div class="toggle-desc">כשזה פעיל, הבוט שולח הודעות אוטומטיות ישירות ללקוחות על סמך מה שקורה ב-ARBOX - לא רק אליך.</div>
+            </div>
+            <form method="POST" action="/admin/toggle-automations">
+              <button class="${automationsOn ? "btn-danger" : "btn-primary"}" type="submit">${automationsOn ? "כבה אוטומציות" : "הדלק אוטומציות"}</button>
+            </form>
+          </div>
+        </div>
+      </div>`
     )
   );
-});
-
-router.post("/reset-conversation", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
-  if (req.body.phone) store.resetConversation(req.body.phone);
-  res.redirect("/admin/dashboard");
 });
 
 module.exports = router;
