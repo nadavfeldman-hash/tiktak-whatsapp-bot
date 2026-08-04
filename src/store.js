@@ -1,7 +1,9 @@
 const fs = require("fs");
 const path = require("path");
 
-const DATA_DIR = path.join(__dirname, "..", "data");
+// Overridable so production hosting can point this at a persistent disk
+// mount instead of the app's own (often ephemeral) working directory.
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const CONVERSATIONS_FILE = path.join(DATA_DIR, "conversations.json");
 const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const TICKETS_FILE = path.join(DATA_DIR, "tickets.json");
