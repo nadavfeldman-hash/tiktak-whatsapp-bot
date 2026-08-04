@@ -39,6 +39,16 @@ async function checkNewLeads() {
   for (const lead of newLeads) {
     if (isFirstRun) break; // don't spam alerts for existing history on first run ever
     await whatsapp.sendText(ADMIN_PHONE, formatLeadAlert(lead));
+
+    if (customerAutomationsEnabled() && lead.phone) {
+      try {
+        await whatsapp.sendTemplate(lead.phone.replace("+", ""), "new_lead_details_request", [
+          lead.first_name || "",
+        ]);
+      } catch (e) {
+        console.error("Failed to message new lead", lead.phone, e.message);
+      }
+    }
   }
 
   const latestTime = leads.reduce((max, lead) => {
