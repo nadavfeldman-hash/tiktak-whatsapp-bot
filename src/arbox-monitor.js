@@ -412,6 +412,90 @@ async function checkLeadNoResponse() {
   }
 }
 
+// Runs once a week: counts each active (non-trial) member's registrations in
+// the last 7 days vs the 7 days before that, and nudges them if the trend is
+// clearly up, down, or flatly steady.
+async function fetchScheduleRange(fromStr, toStr) {
+  let sessions = [];
+  let page = 1;
+  while (true) {
+    const result = await arbox.getSchedule({
+      from_date: fromStr,
+      to_date: toStr,
+      limit: 200,
+      page,
+      registration_details: "1",
+    });
+    sessions = sessions.concat(result.data || []);
+    if (!result.extra?.pagination?.next_page_url) break;
+    page++;
+  }
+  return sessions;
+}
+
+function countRegistrationsByUser(sessions) {
+  const counts = new Map();
+  for (const session of sessions) {
+    for (const reg of session.registration_Details || []) {
+      if ((reg.membership_type || "").includes("ניסיון")) continue; // trial users have no "trend" yet
+      if (!reg.phone) continue;
+      const key = reg.user_id;
+      const entry = counts.get(key) || { count: 0, name: reg.first_name || reg.full_name, phone: reg.phone };
+      entry.count++;
+      counts.set(key, entry);
+    }
+  }
+  return counts;
+}
+
+async function checkAttendanceTrends() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const lastRun = state.lastAttendanceTrendCheckDate ? new Date(state.lastAttendanceTrendCheckDate) : null;
+  const now = new Date();
+  if (lastRun && now - lastRun < 7 * 24 * 60 * 60 * 1000) return;
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const weekAgo = new Date(now);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  const twoWeeksAgo = new Date(now);
+  twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+  const dayBeforeWeekAgo = new Date(weekAgo);
+  dayBeforeWeekAgo.setDate(dayBeforeWeekAgo.getDate() - 1);
+
+  const thisWeekSessions = await fetchScheduleRange(fmt(weekAgo), fmt(now));
+  const lastWeekSessions = await fetchScheduleRange(fmt(twoWeeksAgo), fmt(dayBeforeWeekAgo));
+
+  const thisWeekCounts = countRegistrationsByUser(thisWeekSessions);
+  const lastWeekCounts = countRegistrationsByUser(lastWeekSessions);
+
+  const allUserIds = new Set([...thisWeekCounts.keys(), ...lastWeekCounts.keys()]);
+  for (const userId of allUserIds) {
+    const current = thisWeekCounts.get(userId);
+    const previous = lastWeekCounts.get(userId);
+    const currentCount = current?.count || 0;
+    const previousCount = previous?.count || 0;
+    if (currentCount === 0 && previousCount === 0) continue;
+    const info = current || previous;
+    if (!info?.phone) continue;
+
+    let template;
+    if (currentCount > previousCount) template = "attendance_trend_up";
+    else if (currentCount < previousCount) template = "attendance_trend_down";
+    else if (currentCount > 0) template = "attendance_trend_steady";
+    else continue;
+
+    const params =
+      template === "attendance_trend_steady"
+        ? [info.name || "", String(currentCount)]
+        : [info.name || "", String(previousCount), String(currentCount)];
+    await whatsapp.sendTemplate(info.phone.replace("+", ""), template, params);
+  }
+
+  store.setArboxState({ ...state, lastAttendanceTrendCheckDate: now.toISOString() });
+}
+
 const COACH_TRIAL_NOTICE_HOUR = 19; // evening before, once per day
 
 async function checkCoachTrialNotices() {
@@ -512,6 +596,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkLeadNoResponse().catch((e) => console.error("Arbox monitor (lead no-response) error:", e.message));
     checkCoachTrialNotices().catch((e) => console.error("Arbox monitor (coach notices) error:", e.message));
     checkCoachReplacements().catch((e) => console.error("Arbox monitor (coach replacements) error:", e.message));
+    checkAttendanceTrends().catch((e) => console.error("Arbox monitor (attendance trends) error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);
@@ -532,4 +617,5 @@ module.exports = {
   checkLeadNoResponse,
   checkCoachTrialNotices,
   checkCoachReplacements,
+  checkAttendanceTrends,
 };
