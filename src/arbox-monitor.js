@@ -598,6 +598,103 @@ async function checkCoachReplacements() {
   store.setArboxState({ ...state, coachScheduleSnapshot: newSnapshot });
 }
 
+function parseHoursBefore(hoursBeforeStr) {
+  // Format looks like "10:14:29.000000" (H+:MM:SS)
+  const match = /^(\d+):(\d+):(\d+)/.exec(hoursBeforeStr || "");
+  if (!match) return null;
+  return Number(match[1]) + Number(match[2]) / 60;
+}
+
+const LATE_CANCELLATION_THRESHOLD_HOURS = 12;
+
+async function checkLateCancellations() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const notifiedKeys = new Set(state.notifiedLateCancellationKeys || []);
+
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date();
+  from.setDate(from.getDate() - 3);
+
+  const result = await arbox.getReport("bookingCancellationReport", {
+    fromDate: from.toISOString().slice(0, 10),
+    toDate: to,
+    limit: 200,
+    group_by: "user",
+  });
+  const cancellations = result.data || [];
+  let changed = false;
+
+  for (const c of cancellations) {
+    if (c.cancelled_by !== "user") continue; // staff-initiated cancellations aren't the customer's fault
+    if (!c.phone) continue;
+    const key = `${c.user_id}:${c.schedule_id}`;
+    if (notifiedKeys.has(key)) continue;
+
+    const hoursBefore = parseHoursBefore(c.hours_before);
+    if (hoursBefore === null || hoursBefore >= LATE_CANCELLATION_THRESHOLD_HOURS) continue;
+
+    await whatsapp.sendTemplate(c.phone.replace("+", ""), "late_cancellation_callout", [
+      c.first_name || "",
+      c.class_name || "אימון",
+      `${c.date || ""} ${(c.start_time || "").slice(0, 5)}`.trim(),
+    ]);
+    await sleep(PACE_MS);
+    notifiedKeys.add(key);
+    changed = true;
+  }
+
+  if (changed) {
+    store.setArboxState({ ...state, notifiedLateCancellationKeys: Array.from(notifiedKeys) });
+  }
+}
+
+const STREAK_MILESTONES = [3, 5, 10, 15, 20, 26, 52];
+
+async function checkStreaks() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const lastRun = state.lastStreakCheckDate ? new Date(state.lastStreakCheckDate) : null;
+  const now = new Date();
+  if (lastRun && now - lastRun < 7 * 24 * 60 * 60 * 1000) return;
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const weekAgo = new Date(now);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+
+  const thisWeekSessions = await fetchScheduleRange(fmt(weekAgo), fmt(now));
+  const thisWeekCounts = countRegistrationsByUser(thisWeekSessions);
+
+  const streaks = { ...(state.userStreaks || {}) };
+  const seenThisWeek = new Set(thisWeekCounts.keys());
+
+  // Anyone who was on a streak but had zero registrations this week breaks it.
+  for (const userId of Object.keys(streaks)) {
+    if (!seenThisWeek.has(Number(userId)) && !seenThisWeek.has(userId)) {
+      streaks[userId] = { ...streaks[userId], streak: 0 };
+    }
+  }
+
+  for (const [userId, info] of thisWeekCounts) {
+    const key = String(userId);
+    const previousStreak = streaks[key]?.streak || 0;
+    const newStreak = previousStreak + 1;
+    streaks[key] = { streak: newStreak, name: info.name, phone: info.phone };
+
+    if (STREAK_MILESTONES.includes(newStreak)) {
+      await whatsapp.sendTemplate(info.phone.replace("+", ""), "streak_milestone_v2", [
+        info.name || "",
+        String(newStreak),
+      ]);
+      await sleep(PACE_MS);
+    }
+  }
+
+  store.setArboxState({ ...state, userStreaks: streaks, lastStreakCheckDate: now.toISOString() });
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
     checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
@@ -614,6 +711,8 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkCoachTrialNotices().catch((e) => console.error("Arbox monitor (coach notices) error:", e.message));
     checkCoachReplacements().catch((e) => console.error("Arbox monitor (coach replacements) error:", e.message));
     checkAttendanceTrends().catch((e) => console.error("Arbox monitor (attendance trends) error:", e.message));
+    checkLateCancellations().catch((e) => console.error("Arbox monitor (late cancellations) error:", e.message));
+    checkStreaks().catch((e) => console.error("Arbox monitor (streaks) error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);
@@ -635,4 +734,6 @@ module.exports = {
   checkCoachTrialNotices,
   checkCoachReplacements,
   checkAttendanceTrends,
+  checkLateCancellations,
+  checkStreaks,
 };

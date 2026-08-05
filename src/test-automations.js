@@ -42,6 +42,8 @@ const CUSTOMER_FACING_CHECKS = [
   ["checkCoachTrialNotices", monitor.checkCoachTrialNotices],
   ["checkCoachReplacements", monitor.checkCoachReplacements],
   ["checkAttendanceTrends", monitor.checkAttendanceTrends],
+  ["checkLateCancellations", monitor.checkLateCancellations],
+  ["checkStreaks", monitor.checkStreaks],
 ];
 
 const ADMIN_FACING_CHECKS = [
