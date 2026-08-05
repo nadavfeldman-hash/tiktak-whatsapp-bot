@@ -336,6 +336,111 @@ async function checkTrialReminders() {
   }
 }
 
+const ABSENCE_TEMPLATES = ["absence_reminder_1", "absence_reminder_2", "absence_reminder_3"];
+
+async function checkAbsences() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const notifiedIds = new Set(state.notifiedAbsenceUserIds || []);
+
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date();
+  from.setDate(from.getDate() - 30); // Arbox reports cap the range at 31 days
+  const fromStr = from.toISOString().slice(0, 10);
+
+  const result = await arbox.getReport("absenceReport", {
+    fromDate: fromStr,
+    toDate: to,
+    limit: 200,
+    group_by: "user",
+  });
+  const people = result.data || [];
+  const now = new Date();
+  let changed = false;
+
+  for (const person of people) {
+    if (person.future_registration !== "no" || person.allow_sms === "no" || !person.phone) continue;
+    if (notifiedIds.has(String(person.id))) continue;
+
+    const lastSeen = new Date(person.last_seen);
+    const daysAgo = Math.floor((now - lastSeen) / (1000 * 60 * 60 * 24));
+    if (daysAgo < 3 || daysAgo > 14) continue; // too soon, or too stale to bother
+
+    const template = ABSENCE_TEMPLATES[Math.floor(Math.random() * ABSENCE_TEMPLATES.length)];
+    const params = template === "absence_reminder_3" ? [person.first_name, String(daysAgo)] : [person.first_name];
+    await whatsapp.sendTemplate(person.phone.replace("+", ""), template, params);
+    notifiedIds.add(String(person.id));
+    changed = true;
+  }
+
+  if (changed) {
+    store.setArboxState({ ...state, notifiedAbsenceUserIds: Array.from(notifiedIds) });
+  }
+}
+
+const LEAD_NO_RESPONSE_TEMPLATES = ["lead_no_response_1", "lead_no_response_2", "lead_no_response_3"];
+
+async function checkLeadNoResponse() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const notifiedIds = new Set(state.notifiedLeadNoResponseIds || []);
+
+  const result = await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" });
+  const leads = result.data || [];
+  const now = new Date();
+  let changed = false;
+
+  for (const lead of leads) {
+    if (!(lead.lead_status || "").includes("ללא מענה")) continue;
+    if (!lead.phone) continue;
+    if (notifiedIds.has(String(lead.user_id))) continue;
+
+    const updated = new Date(lead.updated_at);
+    const daysAgo = Math.floor((now - updated) / (1000 * 60 * 60 * 24));
+    if (daysAgo < 2) continue; // give it a couple of days before nudging again
+
+    const template = LEAD_NO_RESPONSE_TEMPLATES[Math.floor(Math.random() * LEAD_NO_RESPONSE_TEMPLATES.length)];
+    await whatsapp.sendTemplate(lead.phone.replace("+", ""), template, [lead.first_name || ""]);
+    notifiedIds.add(String(lead.user_id));
+    changed = true;
+  }
+
+  if (changed) {
+    store.setArboxState({ ...state, notifiedLeadNoResponseIds: Array.from(notifiedIds) });
+  }
+}
+
+const COACH_TRIAL_NOTICE_HOUR = 19; // evening before, once per day
+
+async function checkCoachTrialNotices() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const today = new Date().toISOString().slice(0, 10);
+  const currentHour = new Date().getHours();
+  if (state.lastCoachTrialNoticeDate === today || currentHour < COACH_TRIAL_NOTICE_HOUR) return;
+
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+
+  const registrations = await findTrialRegistrations(tomorrowStr);
+  for (const { session, reg } of registrations) {
+    const coachPhone = session.staff_member?.phone;
+    if (!coachPhone) continue;
+    await whatsapp.sendTemplate(coachPhone.replace("+", ""), "coach_trial_notice_morning", [
+      session.staff_member.name || "",
+      session.session_name || "אימון",
+      session.start_time || "",
+      reg.full_name || "",
+    ]);
+  }
+
+  store.setArboxState({ ...state, lastCoachTrialNoticeDate: today });
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
     checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
@@ -347,6 +452,9 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkNewMembers().catch((e) => console.error("Arbox monitor (new members) error:", e.message));
     checkLostLeads().catch((e) => console.error("Arbox monitor (lost leads) error:", e.message));
     checkTrialReminders().catch((e) => console.error("Arbox monitor (trial reminders) error:", e.message));
+    checkAbsences().catch((e) => console.error("Arbox monitor (absences) error:", e.message));
+    checkLeadNoResponse().catch((e) => console.error("Arbox monitor (lead no-response) error:", e.message));
+    checkCoachTrialNotices().catch((e) => console.error("Arbox monitor (coach notices) error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);
@@ -363,4 +471,7 @@ module.exports = {
   checkNewMembers,
   checkLostLeads,
   checkTrialReminders,
+  checkAbsences,
+  checkLeadNoResponse,
+  checkCoachTrialNotices,
 };
