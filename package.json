@@ -11,7 +11,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "chat": "node src/test-cli.js",
-    "test:scenarios": "node src/test-scenarios.js"
+    "test:scenarios": "node src/test-scenarios.js",
+    "test:automations": "node src/test-automations.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

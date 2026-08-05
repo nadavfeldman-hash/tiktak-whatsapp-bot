@@ -4,6 +4,12 @@ const store = require("./store");
 
 const ADMIN_PHONE = process.env.ADMIN_PHONE;
 
+// Small pause between messages in any loop that could message many different
+// recipients in one run (e.g. the first-ever attendance-trend sweep can hit
+// 100+ people) - keeps us well under WhatsApp's send-rate limits.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const PACE_MS = 1200;
+
 // Safety gate: the checks below this point message real customers directly
 // (not just Nadav). They must never fire just because the server restarted -
 // only when explicitly turned on (via the admin panel, or ENABLE_CUSTOMER_AUTOMATIONS
@@ -45,6 +51,7 @@ async function checkNewLeads() {
         await whatsapp.sendTemplate(lead.phone.replace("+", ""), "new_lead_details_request", [
           lead.first_name || "",
         ]);
+        await sleep(PACE_MS);
       } catch (e) {
         console.error("Failed to message new lead", lead.phone, e.message);
       }
@@ -178,6 +185,7 @@ async function checkBirthdays() {
   for (const person of people) {
     const template = BIRTHDAY_TEMPLATES[Math.floor(Math.random() * BIRTHDAY_TEMPLATES.length)];
     await whatsapp.sendTemplate(person.phone.replace("+", ""), template, [person.first_name]);
+    await sleep(PACE_MS);
   }
 
   store.setArboxState({ ...state, lastBirthdayCheckDate: today });
@@ -211,6 +219,7 @@ async function checkFailedPayments() {
       const phone = user.data?.phone;
       if (phone) {
         await whatsapp.sendTemplate(phone.replace("+", ""), "failed_payment_reminder", [t.first_name]);
+        await sleep(PACE_MS);
       }
     } catch (e) {
       console.error("Failed to notify about failed payment", t.transaction_id, e.message);
@@ -240,6 +249,7 @@ async function checkNewMembers() {
     for (const c of newOnes) {
       if (c.phone) {
         await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member", [c.first_name]);
+        await sleep(PACE_MS);
       }
     }
   }
@@ -264,6 +274,7 @@ async function checkLostLeads() {
     for (const c of newOnes) {
       if (c.phone) {
         await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye", [c.first_name]);
+        await sleep(PACE_MS);
       }
     }
   }
@@ -318,6 +329,7 @@ async function checkTrialReminders() {
         session.session_name || "אימון",
         session.start_time || "",
       ]);
+      await sleep(PACE_MS);
       sentKeys.add(key);
       changed = true;
     }
@@ -370,6 +382,7 @@ async function checkAbsences() {
     const template = ABSENCE_TEMPLATES[Math.floor(Math.random() * ABSENCE_TEMPLATES.length)];
     const params = template === "absence_reminder_3" ? [person.first_name, String(daysAgo)] : [person.first_name];
     await whatsapp.sendTemplate(person.phone.replace("+", ""), template, params);
+    await sleep(PACE_MS);
     notifiedIds.add(String(person.id));
     changed = true;
   }
@@ -403,6 +416,7 @@ async function checkLeadNoResponse() {
 
     const template = LEAD_NO_RESPONSE_TEMPLATES[Math.floor(Math.random() * LEAD_NO_RESPONSE_TEMPLATES.length)];
     await whatsapp.sendTemplate(lead.phone.replace("+", ""), template, [lead.first_name || ""]);
+    await sleep(PACE_MS);
     notifiedIds.add(String(lead.user_id));
     changed = true;
   }
@@ -491,6 +505,7 @@ async function checkAttendanceTrends() {
         ? [info.name || "", String(currentCount)]
         : [info.name || "", String(previousCount), String(currentCount)];
     await whatsapp.sendTemplate(info.phone.replace("+", ""), template, params);
+    await sleep(PACE_MS);
   }
 
   store.setArboxState({ ...state, lastAttendanceTrendCheckDate: now.toISOString() });
@@ -520,6 +535,7 @@ async function checkCoachTrialNotices() {
       session.start_time || "",
       reg.full_name || "",
     ]);
+    await sleep(PACE_MS);
   }
 
   store.setArboxState({ ...state, lastCoachTrialNoticeDate: today });
@@ -574,6 +590,7 @@ async function checkCoachReplacements() {
           session.start_time || "",
           previousCoachName,
         ]);
+        await sleep(PACE_MS);
       }
     }
   }
