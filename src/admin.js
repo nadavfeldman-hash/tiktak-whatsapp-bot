@@ -2,8 +2,10 @@ const express = require("express");
 const crypto = require("crypto");
 const store = require("./store");
 const arbox = require("./arbox");
+const whatsapp = require("./whatsapp");
 
 const router = express.Router();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sessions = new Set();
 
 function parseCookies(req) {
@@ -195,6 +197,7 @@ function sidebar(activePage) {
     <a href="/admin/dashboard#tickets" class="nav-item"><span class="nav-icon">🎫</span><span>פניות</span></a>
     <a href="/admin/dashboard#notes" class="nav-item"><span class="nav-icon">🧠</span><span>מה הבוט למד</span></a>
     <a href="/admin/dashboard#automations" class="nav-item"><span class="nav-icon">⚙️</span><span>אוטומציות</span></a>
+    <a href="/admin/dashboard#broadcast" class="nav-item"><span class="nav-icon">📢</span><span>הודעה כללית</span></a>
     <div class="sidebar-footer">
       <form method="POST" action="/admin/logout"><button class="btn-ghost" style="width:100%" type="submit">התנתקות</button></form>
     </div>
@@ -257,6 +260,37 @@ router.post("/notes/add", express.urlencoded({ extended: false }), requireAuth, 
 router.post("/reset-conversation", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   if (req.body.phone) store.resetConversation(req.body.phone);
   res.redirect("/admin/dashboard#conversations");
+});
+
+router.post("/broadcast", express.urlencoded({ extended: false }), requireAuth, async (req, res) => {
+  const text = (req.body.text || "").trim();
+  if (!text) return res.redirect("/admin/dashboard?broadcast=empty#broadcast");
+
+  let members;
+  try {
+    members = await arbox.getAllActiveMembers();
+  } catch (e) {
+    return res.redirect("/admin/dashboard?broadcast=error#broadcast");
+  }
+  const recipients = members.filter((m) => m.phone && m.allow_sms !== "no");
+
+  // Respond immediately - sending to potentially hundreds of people, paced to
+  // avoid WhatsApp throttling, would otherwise time out the HTTP request.
+  res.redirect(`/admin/dashboard?broadcast=started&count=${recipients.length}#broadcast`);
+
+  (async () => {
+    let sent = 0;
+    for (const member of recipients) {
+      try {
+        await whatsapp.sendTemplate(member.phone.replace("+", ""), "general_announcement", [text]);
+        sent++;
+      } catch (e) {
+        console.error("Broadcast failed for", member.phone, e.message);
+      }
+      await sleep(3000);
+    }
+    console.log(`Broadcast finished: ${sent}/${recipients.length} sent.`);
+  })();
 });
 
 router.get("/dashboard", requireAuth, async (req, res) => {
@@ -370,6 +404,15 @@ router.get("/dashboard", requireAuth, async (req, res) => {
 
   const automationsOn = !!settings.customerAutomationsEnabled;
 
+  let broadcastBanner = "";
+  if (req.query.broadcast === "started") {
+    broadcastBanner = `<div class="card card-pad" style="margin-bottom:14px;background:var(--green-soft);color:var(--green);">נשלח בתהליך ל-${esc(req.query.count)} לקוחות (בקצב איטי, ייקח כמה דקות).</div>`;
+  } else if (req.query.broadcast === "empty") {
+    broadcastBanner = `<div class="card card-pad" style="margin-bottom:14px;background:var(--red-soft);color:var(--red);">צריך לכתוב טקסט לפני שליחה.</div>`;
+  } else if (req.query.broadcast === "error") {
+    broadcastBanner = `<div class="card card-pad" style="margin-bottom:14px;background:var(--red-soft);color:var(--red);">שגיאה בטעינת רשימת הלקוחות מ-ARBOX.</div>`;
+  }
+
   res.send(
     layout(
       "סקירה כללית",
@@ -383,6 +426,8 @@ router.get("/dashboard", requireAuth, async (req, res) => {
           </div>
           <span class="badge ${automationsOn ? "on" : "off"}"><span class="dot"></span>אוטומציות ללקוחות: ${automationsOn ? "פעיל" : "כבוי"}</span>
         </div>
+
+        ${broadcastBanner}
 
         <div class="stats-grid">
           <div class="stat-card"><div class="stat-icon">💬</div><div class="stat-label">שיחות פעילות</div><div class="stat-value">${convCount}</div></div>
@@ -428,11 +473,22 @@ router.get("/dashboard", requireAuth, async (req, res) => {
           <div class="section-header"><div class="section-title">⚙️ אוטומציות ללקוחות</div></div>
           <div class="card card-pad toggle-row">
             <div>
-              <div style="font-weight:600;">ימי הולדת, תשלום שנכשל, ליד חדש/אבוד</div>
+              <div style="font-weight:600;">ימי הולדת, תשלום שנכשל, ליד חדש/אבוד, תזכורות ומעקבים</div>
               <div class="toggle-desc">כשזה פעיל, הבוט שולח הודעות אוטומטיות ישירות ללקוחות על סמך מה שקורה ב-ARBOX - לא רק אליך.</div>
             </div>
             <form method="POST" action="/admin/toggle-automations">
               <button class="${automationsOn ? "btn-danger" : "btn-primary"}" type="submit">${automationsOn ? "כבה אוטומציות" : "הדלק אוטומציות"}</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="section" id="broadcast">
+          <div class="section-header"><div class="section-title">📢 הודעה כללית לכל הלקוחות</div></div>
+          <div class="card card-pad">
+            <div class="toggle-desc" style="margin-bottom:10px;max-width:none;">נשלח לכל הלקוחות הפעילים שהסכימו לקבל הודעות (allow_sms), בקצב איטי כדי לא להיחסם. אי אפשר לבטל אחרי שליחה - תבדוק היטב לפני.</div>
+            <form method="POST" action="/admin/broadcast" onsubmit="return confirm('לשלוח את ההודעה הזו לכל הלקוחות הפעילים? אי אפשר לבטל.')">
+              <textarea name="text" rows="3" placeholder="לדוגמה: בשישי הקרוב נפתח שעה מאוחר יותר, 09:00 במקום 08:00"></textarea>
+              <div style="margin-top:10px;"><button class="btn-primary" type="submit">שלח לכל הלקוחות</button></div>
             </form>
           </div>
         </div>

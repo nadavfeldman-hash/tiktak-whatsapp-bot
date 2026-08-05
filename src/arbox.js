@@ -65,6 +65,18 @@ function getUser(userId) {
   return arboxRequest(`/v3/users/${userId}`);
 }
 
+async function getAllActiveMembers() {
+  let members = [];
+  let page = 1;
+  while (true) {
+    const result = await getReport("activeMembersReport", { limit: 200, page });
+    members = members.concat(result.data || []);
+    if (!result.extra?.pagination?.next_page_url) break;
+    page++;
+  }
+  return members;
+}
+
 module.exports = {
   getLocations,
   getLeads,
@@ -76,4 +88,5 @@ module.exports = {
   getConvertedLeads,
   getLostLeads,
   getUser,
+  getAllActiveMembers,
 };
