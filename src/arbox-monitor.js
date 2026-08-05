@@ -441,6 +441,62 @@ async function checkCoachTrialNotices() {
   store.setArboxState({ ...state, lastCoachTrialNoticeDate: today });
 }
 
+// Detects when a session's assigned coach changes from what we last saw, by
+// snapshotting today's + tomorrow's schedule each run and diffing against the
+// previous snapshot - Arbox has no "replacement" event/webhook of its own.
+async function checkCoachReplacements() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const previousSnapshot = state.coachScheduleSnapshot || {};
+  const newSnapshot = {};
+
+  const today = new Date();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  let sessions = [];
+  for (const dateStr of [fmt(today), fmt(tomorrow)]) {
+    let page = 1;
+    while (true) {
+      const result = await arbox.getSchedule({ from_date: dateStr, to_date: dateStr, limit: 200, page });
+      sessions = sessions.concat(result.data || []);
+      if (!result.extra?.pagination?.next_page_url) break;
+      page++;
+    }
+  }
+
+  for (const session of sessions) {
+    const staffId = session.staff_member?.user_id;
+    if (!staffId) continue;
+    newSnapshot[session.schedule_id] = staffId;
+
+    const previousStaffId = previousSnapshot[session.schedule_id];
+    if (previousStaffId && previousStaffId !== staffId) {
+      const newCoachPhone = session.staff_member.phone;
+      if (newCoachPhone) {
+        let previousCoachName = "המאמן/ת הקודם/ת";
+        try {
+          const previousUser = await arbox.getUser(previousStaffId);
+          if (previousUser.data?.first_name) previousCoachName = previousUser.data.first_name;
+        } catch {
+          // fall back to the generic label above if the lookup fails
+        }
+        await whatsapp.sendTemplate(newCoachPhone.replace("+", ""), "coach_replacement_notice", [
+          session.staff_member.name || "",
+          session.date || "",
+          session.session_name || "",
+          session.start_time || "",
+          previousCoachName,
+        ]);
+      }
+    }
+  }
+
+  store.setArboxState({ ...state, coachScheduleSnapshot: newSnapshot });
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
     checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
@@ -455,6 +511,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkAbsences().catch((e) => console.error("Arbox monitor (absences) error:", e.message));
     checkLeadNoResponse().catch((e) => console.error("Arbox monitor (lead no-response) error:", e.message));
     checkCoachTrialNotices().catch((e) => console.error("Arbox monitor (coach notices) error:", e.message));
+    checkCoachReplacements().catch((e) => console.error("Arbox monitor (coach replacements) error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);
@@ -474,4 +531,5 @@ module.exports = {
   checkAbsences,
   checkLeadNoResponse,
   checkCoachTrialNotices,
+  checkCoachReplacements,
 };
