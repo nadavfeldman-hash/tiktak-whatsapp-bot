@@ -271,6 +271,71 @@ async function checkLostLeads() {
   store.setArboxState({ ...state, lastLostUserId: maxId });
 }
 
+function isTrialRegistration(reg) {
+  return (reg.membership_type || "").includes("ניסיון");
+}
+
+async function findTrialRegistrations(dateStr) {
+  const result = await arbox.getSchedule({
+    from_date: dateStr,
+    to_date: dateStr,
+    limit: 200,
+    registration_details: "1",
+    registration_count: "1",
+  });
+  const sessions = result.data || [];
+  const registrations = [];
+  for (const session of sessions) {
+    for (const reg of session.registration_Details || []) {
+      if (isTrialRegistration(reg)) {
+        registrations.push({ session, reg });
+      }
+    }
+  }
+  return registrations;
+}
+
+const TRIAL_REMINDER_DAY_BEFORE_HOUR = 19; // evening before
+const TRIAL_REMINDER_SAME_DAY_HOUR = 9; // morning of
+
+async function checkTrialReminders() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const sentKeys = new Set(state.sentTrialReminderKeys || []);
+  const currentHour = new Date().getHours();
+  let changed = false;
+
+  const sendFor = async (dateStr, tag, hourGate) => {
+    if (currentHour < hourGate) return;
+    const registrations = await findTrialRegistrations(dateStr);
+    for (const { session, reg } of registrations) {
+      const key = `${session.schedule_id}:${reg.user_id}:${tag}`;
+      if (sentKeys.has(key)) continue;
+      if (!reg.phone) continue;
+      await whatsapp.sendTemplate(reg.phone.replace("+", ""), "trial_reminder_detailed", [
+        reg.full_name || "",
+        session.session_name || "אימון",
+        session.start_time || "",
+      ]);
+      sentKeys.add(key);
+      changed = true;
+    }
+  };
+
+  const today = new Date();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  await sendFor(fmt(tomorrow), "day_before", TRIAL_REMINDER_DAY_BEFORE_HOUR);
+  await sendFor(fmt(today), "same_day", TRIAL_REMINDER_SAME_DAY_HOUR);
+
+  if (changed) {
+    store.setArboxState({ ...state, sentTrialReminderKeys: Array.from(sentKeys) });
+  }
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
     checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
@@ -281,6 +346,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkFailedPayments().catch((e) => console.error("Arbox monitor (failed payments) error:", e.message));
     checkNewMembers().catch((e) => console.error("Arbox monitor (new members) error:", e.message));
     checkLostLeads().catch((e) => console.error("Arbox monitor (lost leads) error:", e.message));
+    checkTrialReminders().catch((e) => console.error("Arbox monitor (trial reminders) error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);
@@ -296,4 +362,5 @@ module.exports = {
   checkFailedPayments,
   checkNewMembers,
   checkLostLeads,
+  checkTrialReminders,
 };
