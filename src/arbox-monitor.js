@@ -394,11 +394,22 @@ async function checkAbsences() {
 
 const LEAD_NO_RESPONSE_TEMPLATES = ["lead_no_response_1", "lead_no_response_2", "lead_no_response_3"];
 
+// Arbox tracks follow-up attempts as sequential statuses: "ללא מענה 1", "ללא
+// מענה 2", "ללא מענה 3" - each stage should get its matching, progressively
+// more direct message (soft nudge -> personal appeal), not a random one, and
+// each stage a lead passes through should get notified once as they reach it.
+function leadNoResponseStage(status) {
+  const match = /ללא מענה\s*(\d+)/.exec(status || "");
+  if (!match) return null;
+  const stage = Number(match[1]);
+  return stage >= 1 && stage <= LEAD_NO_RESPONSE_TEMPLATES.length ? stage : null;
+}
+
 async function checkLeadNoResponse() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
-  const notifiedIds = new Set(state.notifiedLeadNoResponseIds || []);
+  const notifiedKeys = new Set(state.notifiedLeadNoResponseKeys || []);
 
   const result = await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" });
   const leads = result.data || [];
@@ -406,23 +417,25 @@ async function checkLeadNoResponse() {
   let changed = false;
 
   for (const lead of leads) {
-    if (!(lead.lead_status || "").includes("ללא מענה")) continue;
+    const stage = leadNoResponseStage(lead.lead_status);
+    if (!stage) continue;
     if (!lead.phone) continue;
-    if (notifiedIds.has(String(lead.user_id))) continue;
+    const key = `${lead.user_id}:${stage}`;
+    if (notifiedKeys.has(key)) continue;
 
     const updated = new Date(lead.updated_at);
     const daysAgo = Math.floor((now - updated) / (1000 * 60 * 60 * 24));
     if (daysAgo < 2) continue; // give it a couple of days before nudging again
 
-    const template = LEAD_NO_RESPONSE_TEMPLATES[Math.floor(Math.random() * LEAD_NO_RESPONSE_TEMPLATES.length)];
+    const template = LEAD_NO_RESPONSE_TEMPLATES[stage - 1];
     await whatsapp.sendTemplate(lead.phone.replace("+", ""), template, [lead.first_name || ""]);
     await sleep(PACE_MS);
-    notifiedIds.add(String(lead.user_id));
+    notifiedKeys.add(key);
     changed = true;
   }
 
   if (changed) {
-    store.setArboxState({ ...state, notifiedLeadNoResponseIds: Array.from(notifiedIds) });
+    store.setArboxState({ ...state, notifiedLeadNoResponseKeys: Array.from(notifiedKeys) });
   }
 }
 
