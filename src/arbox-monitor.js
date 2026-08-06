@@ -695,6 +695,49 @@ async function checkStreaks() {
   store.setArboxState({ ...state, userStreaks: streaks, lastStreakCheckDate: now.toISOString() });
 }
 
+// Checks in with newer members a couple of times during their first two
+// months - a genuine "how's it going" that (unlike the other automations)
+// invites a real reply, which just flows into the normal AI conversation.
+const NEW_MEMBER_CHECKIN_MILESTONES = [14, 28]; // days since joining
+
+async function checkNewMemberCheckins() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const today = new Date().toISOString().slice(0, 10);
+  if (state.lastNewMemberCheckinDate === today) return; // once a day is plenty for a milestone this coarse
+
+  const sentKeys = new Set(state.sentNewMemberCheckinKeys || []);
+  const now = new Date();
+  let changed = false;
+
+  const members = await arbox.getAllActiveMembers();
+  for (const member of members) {
+    if (!member.phone || member.allow_sms === "no" || !member.created_at) continue;
+    const daysSinceJoined = Math.floor((now - new Date(member.created_at)) / (1000 * 60 * 60 * 24));
+
+    for (const milestone of NEW_MEMBER_CHECKIN_MILESTONES) {
+      if (Math.abs(daysSinceJoined - milestone) > 2) continue; // small window around the target day
+      const key = `${member.user_id}:${milestone}`;
+      if (sentKeys.has(key)) continue;
+
+      await whatsapp.sendTemplate(member.phone.replace("+", ""), "new_member_checkin", [
+        member.first_name || "",
+        String(Math.round(milestone / 7)),
+      ]);
+      await sleep(PACE_MS);
+      sentKeys.add(key);
+      changed = true;
+    }
+  }
+
+  store.setArboxState({
+    ...state,
+    lastNewMemberCheckinDate: today,
+    sentNewMemberCheckinKeys: changed ? Array.from(sentKeys) : state.sentNewMemberCheckinKeys,
+  });
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
     checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
@@ -713,6 +756,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkAttendanceTrends().catch((e) => console.error("Arbox monitor (attendance trends) error:", e.message));
     checkLateCancellations().catch((e) => console.error("Arbox monitor (late cancellations) error:", e.message));
     checkStreaks().catch((e) => console.error("Arbox monitor (streaks) error:", e.message));
+    checkNewMemberCheckins().catch((e) => console.error("Arbox monitor (new member checkins) error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);
@@ -736,4 +780,5 @@ module.exports = {
   checkAttendanceTrends,
   checkLateCancellations,
   checkStreaks,
+  checkNewMemberCheckins,
 };

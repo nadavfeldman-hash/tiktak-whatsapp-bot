@@ -44,6 +44,7 @@ const CUSTOMER_FACING_CHECKS = [
   ["checkAttendanceTrends", monitor.checkAttendanceTrends],
   ["checkLateCancellations", monitor.checkLateCancellations],
   ["checkStreaks", monitor.checkStreaks],
+  ["checkNewMemberCheckins", monitor.checkNewMemberCheckins],
 ];
 
 const ADMIN_FACING_CHECKS = [
