@@ -74,8 +74,15 @@ function getArboxState() {
   return readJson(ARBOX_STATE_FILE, { lastLeadCheckTime: null });
 }
 
+// Every automation check runs concurrently and each one does read-modify-write
+// on this single file, so a plain overwrite means the last writer wins and
+// silently discards whatever the others recorded in the meantime. That is how
+// the lead-status snapshot kept vanishing: it was written, then clobbered by a
+// check that had read the state before it. Re-reading here and merging keeps
+// each check's own keys intact.
 function setArboxState(state) {
-  writeJson(ARBOX_STATE_FILE, state);
+  const current = readJson(ARBOX_STATE_FILE, {});
+  writeJson(ARBOX_STATE_FILE, { ...current, ...state });
 }
 
 function getAppointments() {
