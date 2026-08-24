@@ -15,6 +15,32 @@ const BASE_SYSTEM_PROMPT = `אתה עוזר וירטואלי שעונה בווא
 קודם לשקף בקצרה מה שהוא אמר ולוודא שהבנת נכון, ורק אז להמשיך. ברגע שיש כמה תשובות טובות ותמונה
 אמיתית - לעבור בטבעיות להצעה (מקום, מחיר, הטבות), בלי להמשיך "לחפור" מעבר לזה.
 
+שלושה כללים שגוברים על הכל:
+
+1. אסור לחזור על שאלה שכבר שאלת - גם לא בניסוח אחר. לפני שאתה שולח הודעה, תסתכל על ההודעות
+הקודמות שלך בשיחה: אם השאלה שאתה עומד לשאול כבר הופיעה באחת מהן, אל תשאל אותה. נקודה.
+אם שאלת שאלה והלקוח ענה על משהו אחר - זה אומר שהוא לא רוצה לענות עליה. תוותר עליה לתמיד ותתקדם.
+ואם בשתי ההודעות האחרונות שלך כבר שאלת שאלה שלא נענתה - ההודעה הבאה שלך לא תכיל שאלה בכלל,
+רק תגובה למה שהוא כתב. אדם אמיתי לא חוזר על אותה שאלה שלוש פעמים, ובוט שעושה את זה מאבד את הלקוח.
+
+2. קודם עונים על מה ששאלו. אם שואלים "מה זה בעצם?" / "מה אתם עושים?" - עונים מיד ובקצרה:
+אימוני כוח אמיתיים (לא היט ולא פונקציונלי), אימון של 40 דקות, ארבע תחנות, בקבוצה קטנה, ואימון חדש
+מתחיל כל 10 דקות - אז מגיעים מתי שנוח בלי להתחייב לשעה קבועה. רק אחרי שענית אפשר לשאול שאלה משלך.
+לענות "קודם בוא נכיר" במקום לענות - זה מתסכל ומבריח.
+
+3. לא יודעים אם מדובר בגבר או אישה. אסור להשתמש בלשון זכר, ואסור בשום צורה בלוכסנים - לא "את/ה",
+לא "מתאמן/ת", לא "מאמן/ת". זה נראה כמו טופס ממשלתי ולא כמו אדם שכותב.
+הדרך הנכונה היא לנסח מחדש בלי פנייה ישירה בגוף שני הווה. החלפות מדויקות:
+
+  "בוא נכיר" ← "אז נכיר רגע"          "ספר לי" ← "מעניין אותי לשמוע" / "אשמח לשמוע"
+  "אתה יכול להגיע" ← "אפשר להגיע"     "תגיד לי" ← "אפשר לכתוב לי"
+  "מבין אותך" ← "מבין את זה לגמרי"     "אם תמשיך" ← "אם ממשיכים"
+  "אתה בול בטיימינג" ← "זה בול הטיימינג"
+
+בעבר גוף שני זהה לשני המינים ("התאמנת", "השארת", "הגעת") אז מותר להשתמש בו חופשי.
+גם "לך", "שלך", "אצלך" בטוחים. לפני כל הודעה - לעבור עליה ולוודא שאין בה אף מילה בלשון זכר.
+רק אם המגדר ברור מעל לכל ספק (השם, או שהלקוח כתב על עצמו בלשון מסוימת) - אפשר לעבור לדבר בהתאם.
+
 מידע על העסק:
 ${knowledge}`;
 
@@ -142,10 +168,41 @@ function executeTool(name, input, phone) {
   return `כלי לא מוכר: ${name}`;
 }
 
+// Asking the same thing three messages running is the single clearest tell that
+// someone is talking to a bot, and the model slips into it however firmly the
+// prompt says not to. So it's enforced here instead of asked for: once the last
+// two replies both carried a question, the next one may not.
+// Assistant turns are stored either as a plain string or as the raw block array
+// the API returned, so pull the text out of both shapes.
+function assistantText(message) {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text || "")
+    .join("\n");
+}
+
+function recentAssistantQuestionRun(history) {
+  const texts = history
+    .filter((m) => m.role === "assistant")
+    .map(assistantText)
+    .filter((t) => t.trim());
+  const last = texts[texts.length - 1];
+  return Boolean(last && last.includes("?"));
+}
+
 async function handleIncomingMessage(phone, userText, isAdmin = false) {
   const history = store.getConversation(phone);
   const messages = [...history, { role: "user", content: userText }];
-  const systemPrompt = buildSystemPrompt(isAdmin);
+  let systemPrompt = buildSystemPrompt(isAdmin);
+  if (!isAdmin && recentAssistantQuestionRun(history)) {
+    systemPrompt += `
+
+חשוב מאוד להודעה הזאת בלבד: ההודעה הקודמת שלך כבר הכילה שאלה. בהודעה הזאת אסור לך לשאול שום שאלה -
+לא סימן שאלה אחד. רק להגיב למה שנכתב, לתת ערך, ולעצור. השיחה תמשיך מעצמה, והלקוח ירגיש שיחה
+ולא תשאול.`;
+  }
   const tools = buildTools(isAdmin);
 
   let finalText = "";
