@@ -16,6 +16,23 @@ const PACE_MS = 1200;
 // in .env as a fallback), after Nadav has reviewed and approved the templates.
 // Read fresh each time (not cached at module load) so the admin panel toggle
 // takes effect immediately, without restarting the server.
+// Automations act on what happens from the day they went live, never on the
+// backlog that was already sitting in Arbox. Without this, switching them on
+// would message every lead whose status was set weeks ago and everyone who
+// stopped coming last month - 47 messages in one burst, when measured.
+//
+// A fixed date rather than "first boot" on purpose: a redeploy or a wiped disk
+// must not make the whole history look new again.
+const AUTOMATIONS_START = new Date(process.env.AUTOMATIONS_START_DATE || "2026-08-24T17:44:57");
+
+// Did this happen after we went live? Anything unparseable counts as old, so
+// missing timestamps stay silent rather than triggering a message.
+function isAfterGoLive(timestamp) {
+  if (!timestamp) return false;
+  const t = new Date(String(timestamp).replace(" ", "T"));
+  return !isNaN(t) && t >= AUTOMATIONS_START;
+}
+
 function customerAutomationsEnabled() {
   // ENABLE_CUSTOMER_AUTOMATIONS is a hard override in BOTH directions. It used
   // to be able only to turn things on, falling through to the stored setting
@@ -419,6 +436,7 @@ async function checkAbsences() {
   for (const person of people) {
     if (person.future_registration !== "no" || person.allow_sms === "no" || !person.phone) continue;
 
+    if (!isAfterGoLive(person.last_seen)) continue; // stopped coming before we went live
     const lastSeen = new Date(person.last_seen);
     const daysAgo = Math.floor((now - lastSeen) / (1000 * 60 * 60 * 24));
     const stage = absenceStage(daysAgo);
@@ -472,6 +490,7 @@ async function checkLeadNoResponse() {
     if (!lead.phone) continue;
     const key = `${lead.user_id}:${stage}`;
     if (notifiedKeys.has(key)) continue;
+    if (!isAfterGoLive(lead.updated_at)) continue; // status set before we went live
 
     // Nadav moves a lead to "ללא מענה N" the moment a call goes unanswered, so
     // that status change IS the trigger - the message goes out immediately
@@ -709,6 +728,7 @@ async function checkLateCancellations() {
     if (notifiedKeys.has(key)) continue;
 
     // Give them an hour to book something else before we say anything.
+    if (!isAfterGoLive(c.cancelled_time)) continue;
     const cancelledAt = new Date((c.cancelled_time || "").replace(" ", "T"));
     if (isNaN(cancelledAt)) continue;
     if (now - cancelledAt < CANCELLATION_GRACE_HOURS * 60 * 60 * 1000) continue;
