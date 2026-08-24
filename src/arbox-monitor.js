@@ -377,9 +377,15 @@ const ABSENCE_STAGES = [
   { minDays: 14, templates: ["absence_reminder_3"] },
 ];
 
-// Highest stage whose threshold the absence has passed, or null if it is still
-// too soon to say anything.
+// Past this, someone has not drifted - they have left. Chasing them with "we're
+// not giving up on you" reads as a mistake, and winning them back is a different
+// conversation entirely.
+const ABSENCE_MAX_DAYS = 30;
+
+// Highest stage whose threshold the absence has passed, or null if it is too
+// soon to say anything - or too late to be saying this particular thing.
 function absenceStage(daysAgo) {
+  if (daysAgo > ABSENCE_MAX_DAYS) return null;
   let stage = null;
   ABSENCE_STAGES.forEach((s, i) => {
     if (daysAgo >= s.minDays) stage = i;

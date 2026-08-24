@@ -119,4 +119,15 @@ app.post("/webhook", async (req, res) => {
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`WhatsApp bot listening on port ${port}`));
 
-arboxMonitor.startMonitoring();
+// SEED_AUTOMATIONS=true marks everything currently outstanding as already
+// handled - silently, sending nothing - so that switching automations on does
+// not fire a month of backlog at once. Set it for one deploy, then remove it.
+if (process.env.SEED_AUTOMATIONS === "true") {
+  console.log("SEED_AUTOMATIONS is set - marking the existing backlog as handled before monitoring starts.");
+  require("./seed-automations")
+    .seedAutomations()
+    .catch((e) => console.error("Seeding failed:", e.message))
+    .finally(() => arboxMonitor.startMonitoring());
+} else {
+  arboxMonitor.startMonitoring();
+}
