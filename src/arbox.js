@@ -77,7 +77,37 @@ async function getAllActiveMembers() {
   return members;
 }
 
+// Who is this WhatsApp number? Checked against leads first (a stranger writing
+// in is usually a lead) and then active members. The whole directory is small
+// enough that this is cheap, and the result is cached by the caller.
+async function findContactByPhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return null;
+  const matches = (p) => String(p || "").replace(/\D/g, "").endsWith(digits.slice(-9));
+
+  try {
+    const leads = (await getLeads({ limit: 200 })).data || [];
+    const lead = leads.find((l) => matches(l.phone));
+    if (lead) {
+      return { name: lead.first_name, gender: lead.gender, source: "lead", status: lead.lead_status };
+    }
+  } catch {
+    // fall through to members
+  }
+
+  try {
+    const member = (await getAllActiveMembers()).find((m) => matches(m.phone));
+    if (member) {
+      return { name: member.first_name || member.full_name, gender: member.gender, source: "member" };
+    }
+  } catch {
+    // unknown caller - the bot will simply write neutrally
+  }
+  return null;
+}
+
 module.exports = {
+  findContactByPhone,
   getLocations,
   getLeads,
   getReport,

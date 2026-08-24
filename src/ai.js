@@ -1,6 +1,8 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const knowledge = require("./knowledge");
 const store = require("./store");
+const arbox = require("./arbox");
+const gender = require("./gender");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
@@ -192,10 +194,41 @@ function recentAssistantQuestionRun(history) {
   return Boolean(last && last.includes("?"));
 }
 
+// One Arbox lookup per phone number per process - the directory barely changes
+// within a conversation, and this sits on the path of every inbound message.
+const contactCache = new Map();
+
+async function lookupContact(phone) {
+  if (contactCache.has(phone)) return contactCache.get(phone);
+  let contact = null;
+  try {
+    contact = await arbox.findContactByPhone(phone);
+  } catch (e) {
+    console.error("Arbox contact lookup failed for", phone, e.message);
+  }
+  contactCache.set(phone, contact);
+  return contact;
+}
+
 async function handleIncomingMessage(phone, userText, isAdmin = false) {
   const history = store.getConversation(phone);
   const messages = [...history, { role: "user", content: userText }];
   let systemPrompt = buildSystemPrompt(isAdmin);
+
+  if (!isAdmin) {
+    const contact = await lookupContact(phone);
+    const who = gender.resolve({ arboxGender: contact?.gender, name: contact?.name });
+    systemPrompt += `
+
+${gender.promptLine(who, contact?.name)}`;
+    if (contact?.source === "member") {
+      systemPrompt += `
+זה מתאמן קיים אצלנו, לא ליד חדש - לא לשאול שאלות היכרות ולא למכור מנוי.`;
+    } else if (contact?.status) {
+      systemPrompt += `
+הסטטוס שלו ב-Arbox הוא "${contact.status}".`;
+    }
+  }
   if (!isAdmin && recentAssistantQuestionRun(history)) {
     systemPrompt += `
 
