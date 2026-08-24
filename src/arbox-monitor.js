@@ -17,7 +17,14 @@ const PACE_MS = 1200;
 // Read fresh each time (not cached at module load) so the admin panel toggle
 // takes effect immediately, without restarting the server.
 function customerAutomationsEnabled() {
-  if (process.env.ENABLE_CUSTOMER_AUTOMATIONS === "true") return true;
+  // ENABLE_CUSTOMER_AUTOMATIONS is a hard override in BOTH directions. It used
+  // to be able only to turn things on, falling through to the stored setting
+  // otherwise - which meant a stale "true" on the server's own disk could send
+  // real customers messages even though every other switch said off. That
+  // happened once, to a live lead. "false" now wins over everything.
+  const override = process.env.ENABLE_CUSTOMER_AUTOMATIONS;
+  if (override === "false") return false;
+  if (override === "true") return true;
   return !!store.getSettings().customerAutomationsEnabled;
 }
 
