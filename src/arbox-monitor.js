@@ -168,7 +168,15 @@ async function checkDueTasks() {
 }
 
 const BIRTHDAY_HOUR = 10; // sends once, the first time the monitor runs at/after this local hour each day
-const BIRTHDAY_TEMPLATES = ["birthday_greeting_1", "birthday_greeting_2", "birthday_greeting_3"];
+// Four variants, picked at random, so people who train here for years don't get
+// the same birthday message twice: two jokey ones, one warm, and one short and
+// personally signed by Nadav.
+const BIRTHDAY_TEMPLATES = [
+  "birthday_greeting_1",
+  "birthday_greeting_2",
+  "birthday_greeting_3",
+  "birthday_greeting_4",
+];
 
 async function checkBirthdays() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
@@ -348,13 +356,33 @@ async function checkTrialReminders() {
   }
 }
 
-const ABSENCE_TEMPLATES = ["absence_reminder_1", "absence_reminder_2", "absence_reminder_3"];
+// Absence nudges escalate with time away, and each stage has several variants
+// picked at random so nobody gets the same wording twice. Someone who stays
+// away passes through all three stages, one message each - the stage they are
+// in is decided by how long it has been, never at random.
+const ABSENCE_STAGES = [
+  { minDays: 4, templates: ["absence_reminder_1a", "absence_reminder_1b", "absence_reminder_1c"] },
+  { minDays: 8, templates: ["absence_reminder_2a", "absence_reminder_2b"] },
+  { minDays: 14, templates: ["absence_reminder_3"] },
+];
+
+// Highest stage whose threshold the absence has passed, or null if it is still
+// too soon to say anything.
+function absenceStage(daysAgo) {
+  let stage = null;
+  ABSENCE_STAGES.forEach((s, i) => {
+    if (daysAgo >= s.minDays) stage = i;
+  });
+  return stage;
+}
 
 async function checkAbsences() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
-  const notifiedIds = new Set(state.notifiedAbsenceUserIds || []);
+  // Keyed by user+stage, so someone who keeps staying away hears from us once
+  // per stage rather than once ever.
+  const notifiedKeys = new Set(state.notifiedAbsenceKeys || []);
 
   const to = new Date().toISOString().slice(0, 10);
   const from = new Date();
@@ -373,22 +401,28 @@ async function checkAbsences() {
 
   for (const person of people) {
     if (person.future_registration !== "no" || person.allow_sms === "no" || !person.phone) continue;
-    if (notifiedIds.has(String(person.id))) continue;
 
     const lastSeen = new Date(person.last_seen);
     const daysAgo = Math.floor((now - lastSeen) / (1000 * 60 * 60 * 24));
-    if (daysAgo < 3 || daysAgo > 14) continue; // too soon, or too stale to bother
+    const stage = absenceStage(daysAgo);
+    if (stage === null) continue; // hasn't been away long enough yet
 
-    const template = ABSENCE_TEMPLATES[Math.floor(Math.random() * ABSENCE_TEMPLATES.length)];
-    const params = template === "absence_reminder_3" ? [person.first_name, String(daysAgo)] : [person.first_name];
+    const key = `${person.id}:${stage}`;
+    if (notifiedKeys.has(key)) continue;
+
+    const variants = ABSENCE_STAGES[stage].templates;
+    const template = variants[Math.floor(Math.random() * variants.length)];
+    // Only the last stage names how many days it has been.
+    const params =
+      template === "absence_reminder_3" ? [person.first_name, String(daysAgo)] : [person.first_name];
     await whatsapp.sendTemplate(person.phone.replace("+", ""), template, params);
     await sleep(PACE_MS);
-    notifiedIds.add(String(person.id));
+    notifiedKeys.add(key);
     changed = true;
   }
 
   if (changed) {
-    store.setArboxState({ ...state, notifiedAbsenceUserIds: Array.from(notifiedIds) });
+    store.setArboxState({ ...state, notifiedAbsenceKeys: Array.from(notifiedKeys) });
   }
 }
 
@@ -413,7 +447,6 @@ async function checkLeadNoResponse() {
 
   const result = await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" });
   const leads = result.data || [];
-  const now = new Date();
   let changed = false;
 
   for (const lead of leads) {
@@ -423,10 +456,9 @@ async function checkLeadNoResponse() {
     const key = `${lead.user_id}:${stage}`;
     if (notifiedKeys.has(key)) continue;
 
-    const updated = new Date(lead.updated_at);
-    const daysAgo = Math.floor((now - updated) / (1000 * 60 * 60 * 24));
-    if (daysAgo < 2) continue; // give it a couple of days before nudging again
-
+    // Nadav moves a lead to "ללא מענה N" the moment a call goes unanswered, so
+    // that status change IS the trigger - the message goes out immediately
+    // rather than waiting for a cooling-off period.
     const template = LEAD_NO_RESPONSE_TEMPLATES[stage - 1];
     await whatsapp.sendTemplate(lead.phone.replace("+", ""), template, [lead.first_name || ""]);
     await sleep(PACE_MS);
