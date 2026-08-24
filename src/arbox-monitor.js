@@ -48,7 +48,7 @@ async function checkNewLeads() {
 
     if (customerAutomationsEnabled() && lead.phone) {
       try {
-        await whatsapp.sendTemplate(lead.phone.replace("+", ""), "new_lead_details_request", [
+        await whatsapp.sendTemplate(lead.phone.replace("+", ""), "new_lead_details_request_v2", [
           lead.first_name || "",
         ]);
         await sleep(PACE_MS);
@@ -172,9 +172,9 @@ const BIRTHDAY_HOUR = 10; // sends once, the first time the monitor runs at/afte
 // the same birthday message twice: two jokey ones, one warm, and one short and
 // personally signed by Nadav.
 const BIRTHDAY_TEMPLATES = [
-  "birthday_greeting_1",
-  "birthday_greeting_2",
-  "birthday_greeting_3",
+  "birthday_greeting_1_v2",
+  "birthday_greeting_2_v2",
+  "birthday_greeting_3_v2",
   "birthday_greeting_4",
 ];
 
@@ -256,7 +256,7 @@ async function checkNewMembers() {
   if (!isFirstRun) {
     for (const c of newOnes) {
       if (c.phone) {
-        await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member", [c.first_name]);
+        await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name]);
         await sleep(PACE_MS);
       }
     }
@@ -281,7 +281,7 @@ async function checkLostLeads() {
   if (!isFirstRun) {
     for (const c of newOnes) {
       if (c.phone) {
-        await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye", [c.first_name]);
+        await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name]);
         await sleep(PACE_MS);
       }
     }
@@ -332,7 +332,11 @@ async function checkTrialReminders() {
       const key = `${session.schedule_id}:${reg.user_id}:${tag}`;
       if (sentKeys.has(key)) continue;
       if (!reg.phone) continue;
-      await whatsapp.sendTemplate(reg.phone.replace("+", ""), "trial_reminder_detailed", [
+      // The evening-before message carries the full briefing (what to bring,
+      // the Waze address); on the day itself it's just a short nudge.
+      const template =
+        tag === "day_before" ? "trial_reminder_day_before_v2" : "trial_reminder_same_day_v2";
+      await whatsapp.sendTemplate(reg.phone.replace("+", ""), template, [
         reg.full_name || "",
         session.session_name || "אימון",
         session.start_time || "",
@@ -426,7 +430,7 @@ async function checkAbsences() {
   }
 }
 
-const LEAD_NO_RESPONSE_TEMPLATES = ["lead_no_response_1", "lead_no_response_2", "lead_no_response_3"];
+const LEAD_NO_RESPONSE_TEMPLATES = ["lead_no_response_1_v2", "lead_no_response_2", "lead_no_response_3_v2"];
 
 // Arbox tracks follow-up attempts as sequential statuses: "ללא מענה 1", "ללא
 // מענה 2", "ללא מענה 3" - each stage should get its matching, progressively
@@ -542,7 +546,9 @@ async function checkAttendanceTrends() {
     let template;
     if (currentCount > previousCount) template = "attendance_trend_up";
     else if (currentCount < previousCount) template = "attendance_trend_down";
-    else if (currentCount > 0) template = "attendance_trend_steady";
+    // Only congratulate a steady week from 2 sessions up - holding at a single
+    // workout a week isn't a rhythm worth celebrating.
+    else if (currentCount >= 2) template = "attendance_trend_steady";
     else continue;
 
     const params =
@@ -643,14 +649,23 @@ async function checkCoachReplacements() {
   store.setArboxState({ ...state, coachScheduleSnapshot: newSnapshot });
 }
 
-function parseHoursBefore(hoursBeforeStr) {
-  // Format looks like "10:14:29.000000" (H+:MM:SS)
-  const match = /^(\d+):(\d+):(\d+)/.exec(hoursBeforeStr || "");
-  if (!match) return null;
-  return Number(match[1]) + Number(match[2]) / 60;
-}
+// There is no waiting list here - a new workout starts every 10 minutes, so a
+// cancelled slot costs the studio nothing. What Nadav wants to catch is the
+// member who cancels and then simply doesn't train that day at all. We give
+// them an hour to book something else before saying anything.
+const CANCELLATION_GRACE_HOURS = 1;
 
-const LATE_CANCELLATION_THRESHOLD_HOURS = 12;
+// user_ids with at least one live registration on the given date.
+async function registeredUserIdsOn(dateStr) {
+  const sessions = await fetchScheduleRange(dateStr, dateStr);
+  const ids = new Set();
+  for (const session of sessions) {
+    for (const reg of session.registration_Details || []) {
+      if (reg.user_id != null) ids.add(String(reg.user_id));
+    }
+  }
+  return ids;
+}
 
 async function checkLateCancellations() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
@@ -669,16 +684,27 @@ async function checkLateCancellations() {
     group_by: "user",
   });
   const cancellations = result.data || [];
+  const now = new Date();
   let changed = false;
+  // One lookup per affected date, not per cancellation.
+  const registeredByDate = new Map();
 
   for (const c of cancellations) {
     if (c.cancelled_by !== "user") continue; // staff-initiated cancellations aren't the customer's fault
-    if (!c.phone) continue;
+    if (!c.phone || !c.date) continue;
     const key = `${c.user_id}:${c.schedule_id}`;
     if (notifiedKeys.has(key)) continue;
 
-    const hoursBefore = parseHoursBefore(c.hours_before);
-    if (hoursBefore === null || hoursBefore >= LATE_CANCELLATION_THRESHOLD_HOURS) continue;
+    // Give them an hour to book something else before we say anything.
+    const cancelledAt = new Date((c.cancelled_time || "").replace(" ", "T"));
+    if (isNaN(cancelledAt)) continue;
+    if (now - cancelledAt < CANCELLATION_GRACE_HOURS * 60 * 60 * 1000) continue;
+
+    if (!registeredByDate.has(c.date)) {
+      registeredByDate.set(c.date, await registeredUserIdsOn(c.date));
+    }
+    // They rebooked that same day - nothing to say.
+    if (registeredByDate.get(c.date).has(String(c.user_id))) continue;
 
     await whatsapp.sendTemplate(c.phone.replace("+", ""), "late_cancellation_callout", [
       c.first_name || "",
@@ -695,7 +721,8 @@ async function checkLateCancellations() {
   }
 }
 
-const STREAK_MILESTONES = [3, 5, 10, 15, 20, 26, 52];
+// Nadav celebrates at 10, 25, 50 and 100 sessions in a row.
+const STREAK_MILESTONES = [10, 25, 50, 100];
 
 async function checkStreaks() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
@@ -766,7 +793,7 @@ async function checkNewMemberCheckins() {
       const key = `${member.user_id}:${milestone}`;
       if (sentKeys.has(key)) continue;
 
-      await whatsapp.sendTemplate(member.phone.replace("+", ""), "new_member_checkin", [
+      await whatsapp.sendTemplate(member.phone.replace("+", ""), "new_member_checkin_v2", [
         member.first_name || "",
         String(Math.round(milestone / 7)),
       ]);
