@@ -22,6 +22,26 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 app.use("/admin", adminPanel);
 
 // Meta calls this once to verify the webhook URL you register.
+// Which switches are actually on, in the running process. Environment
+// variables set in the Render dashboard cannot be read from anywhere else, so
+// without this every "did the toggle take effect?" question turns into guesswork
+// and screenshots. Booleans and one date only - no secrets.
+app.get("/health", (req, res) => {
+  const override = process.env.ENABLE_CUSTOMER_AUTOMATIONS;
+  res.json({
+    autoReply: process.env.ENABLE_AUTO_REPLY === "true",
+    customerAutomations: {
+      envOverride: override === undefined ? null : override,
+      storedSetting: !!store.getSettings().customerAutomationsEnabled,
+      effective: override === "false" ? false : override === "true" ? true : !!store.getSettings().customerAutomationsEnabled,
+    },
+    automationsStartFrom: process.env.AUTOMATIONS_START_DATE || "built-in default",
+    sendsVia: process.env.D360_API_KEY ? "360dialog" : "graph",
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+    arboxConfigured: Boolean(process.env.ARBOX_API_KEY),
+  });
+});
+
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
