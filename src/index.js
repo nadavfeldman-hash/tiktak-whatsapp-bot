@@ -53,6 +53,17 @@ app.post("/webhook", async (req, res) => {
     incoming = whatsapp.extractIncomingText(req.body);
     if (!incoming) return; // status update or other non-message event
 
+    // Second safety gate, alongside ENABLE_CUSTOMER_AUTOMATIONS: while the bot's
+    // answers are still being tuned, log what people send but stay silent. Only
+    // the literal string "true" opens it - anything else keeps the bot quiet.
+    if (process.env.ENABLE_AUTO_REPLY !== "true") {
+      console.log(
+        `Auto-reply OFF - not answering ${incoming.from}: ` +
+          (incoming.unsupported ? "(non-text message)" : JSON.stringify(incoming.text))
+      );
+      return;
+    }
+
     await whatsapp.markAsRead(incoming.id);
 
     if (incoming.unsupported) {
