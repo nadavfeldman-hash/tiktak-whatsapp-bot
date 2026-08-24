@@ -36,6 +36,10 @@ app.get("/status", (req, res) => {
       effective: override === "false" ? false : override === "true" ? true : !!store.getSettings().customerAutomationsEnabled,
     },
     automationsStartFrom: process.env.AUTOMATIONS_START_DATE || "built-in default",
+    // What the monitor currently believes each lead's status is. Without seeing
+    // this there is no way to tell a "nothing changed" from a bug.
+    leadStatusSnapshot: store.getArboxState().leadStatusSnapshot || null,
+    notifiedLeadKeys: (store.getArboxState().notifiedLeadNoResponseKeys || []).length,
     sendsVia: process.env.D360_API_KEY ? "360dialog" : "graph",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
     arboxConfigured: Boolean(process.env.ARBOX_API_KEY),
