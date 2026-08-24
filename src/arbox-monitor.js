@@ -480,8 +480,13 @@ async function checkLeadNoResponse() {
   const state = store.getArboxState();
   const notifiedKeys = new Set(state.notifiedLeadNoResponseKeys || []);
 
+  const previousStatuses = state.leadStatusSnapshot || {};
   const result = await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" });
   const leads = result.data || [];
+  const currentStatuses = {};
+  leads.forEach((l) => {
+    currentStatuses[l.user_id] = l.lead_status;
+  });
   let changed = false;
 
   for (const lead of leads) {
@@ -490,7 +495,15 @@ async function checkLeadNoResponse() {
     if (!lead.phone) continue;
     const key = `${lead.user_id}:${stage}`;
     if (notifiedKeys.has(key)) continue;
-    if (!isAfterGoLive(lead.updated_at)) continue; // status set before we went live
+
+    // Arbox reports updated_at as a bare date with no time, so it cannot tell us
+    // whether a status changed before or after we went live. Instead we keep a
+    // snapshot of what each lead's status was last cycle and react only to an
+    // actual change we witnessed: the first cycle records the current picture
+    // silently, and from then on a status Nadav sets is what triggers the
+    // message.
+    if (previousStatuses[lead.user_id] === undefined) continue; // first sighting
+    if (previousStatuses[lead.user_id] === lead.lead_status) continue; // unchanged
 
     // Nadav moves a lead to "ללא מענה N" the moment a call goes unanswered, so
     // that status change IS the trigger - the message goes out immediately
@@ -502,9 +515,13 @@ async function checkLeadNoResponse() {
     changed = true;
   }
 
-  if (changed) {
-    store.setArboxState({ ...state, notifiedLeadNoResponseKeys: Array.from(notifiedKeys) });
-  }
+  // The snapshot is saved every cycle, whether or not anything was sent, so the
+  // next cycle has something to compare against.
+  store.setArboxState({
+    ...state,
+    notifiedLeadNoResponseKeys: changed ? Array.from(notifiedKeys) : state.notifiedLeadNoResponseKeys,
+    leadStatusSnapshot: currentStatuses,
+  });
 }
 
 // Runs once a week: counts each active (non-trial) member's registrations in
