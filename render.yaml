@@ -16,6 +16,12 @@ services:
         sync: false
       - key: WHATSAPP_VERIFY_TOKEN
         sync: false
+      # 360dialog hosts the WABA since the Coexistence onboarding (24 Aug 2026).
+      # With this set, src/whatsapp.js sends via waba-v2.360dialog.io instead of Graph.
+      - key: D360_API_KEY
+        sync: false
+      - key: D360_WABA_ID
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: ANTHROPIC_MODEL

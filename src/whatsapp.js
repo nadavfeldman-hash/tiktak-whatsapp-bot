@@ -1,14 +1,27 @@
 const GRAPH_VERSION = "v20.0";
 
+// The number is hosted by 360dialog (Coexistence onboarding, Aug 2026), so we
+// send through their gateway rather than Graph. Same JSON payloads, different
+// base URL and auth header. Falls back to Graph if D360_API_KEY isn't set.
+function useD360() {
+  return Boolean(process.env.D360_API_KEY);
+}
+
 function apiUrl() {
+  if (useD360()) return "https://waba-v2.360dialog.io/messages";
   return `https://graph.facebook.com/${GRAPH_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+}
+
+function authHeaders() {
+  if (useD360()) return { "D360-API-KEY": process.env.D360_API_KEY };
+  return { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` };
 }
 
 async function sendText(to, body) {
   const res = await fetch(apiUrl(), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -34,7 +47,7 @@ async function sendTemplate(to, templateName, params = []) {
   const res = await fetch(apiUrl(), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -75,7 +88,7 @@ async function markAsRead(messageId) {
   await fetch(apiUrl(), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

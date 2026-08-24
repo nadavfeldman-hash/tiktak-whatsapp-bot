@@ -12,7 +12,10 @@ const UPDATE_PREFIX = "עדכון:";
 const SHOW_UPDATES_COMMANDS = ["הצג עדכונים", "מה יש בזיכרון"];
 
 const app = express();
-app.use(express.json());
+// Coexistence syncs up to 6 months of chat history through the webhook, and
+// those payloads blow past body-parser's 100kb default - we were dropping them
+// with PayloadTooLargeError.
+app.use(express.json({ limit: "10mb" }));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
