@@ -860,8 +860,25 @@ async function checkNewMemberCheckins() {
   });
 }
 
+// Last outcome of each check, so /status can show why nothing happened. These
+// errors are only logged otherwise, and the Render log is not always reachable
+// when you need it.
+const lastRun = {};
+
+function record(label, promise) {
+  return promise
+    .then(() => {
+      lastRun[label] = { ok: true, at: new Date().toISOString() };
+    })
+    .catch((e) => {
+      lastRun[label] = { ok: false, error: e.message, at: new Date().toISOString() };
+      console.error(`Arbox monitor (${label}) error:`, e.message);
+    });
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
+    record("lead no-response", checkLeadNoResponse());
     checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
     checkDebtReport().catch((e) => console.error("Arbox monitor (debt) error:", e.message));
     checkAttendanceReport().catch((e) => console.error("Arbox monitor (attendance) error:", e.message));
@@ -872,7 +889,6 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkLostLeads().catch((e) => console.error("Arbox monitor (lost leads) error:", e.message));
     checkTrialReminders().catch((e) => console.error("Arbox monitor (trial reminders) error:", e.message));
     checkAbsences().catch((e) => console.error("Arbox monitor (absences) error:", e.message));
-    checkLeadNoResponse().catch((e) => console.error("Arbox monitor (lead no-response) error:", e.message));
     checkCoachTrialNotices().catch((e) => console.error("Arbox monitor (coach notices) error:", e.message));
     checkCoachReplacements().catch((e) => console.error("Arbox monitor (coach replacements) error:", e.message));
     checkAttendanceTrends().catch((e) => console.error("Arbox monitor (attendance trends) error:", e.message));
@@ -885,6 +901,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
 }
 
 module.exports = {
+  lastRun,
   startMonitoring,
   checkNewLeads,
   checkDebtReport,

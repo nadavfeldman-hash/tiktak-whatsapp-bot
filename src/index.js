@@ -40,6 +40,7 @@ app.get("/status", (req, res) => {
     // this there is no way to tell a "nothing changed" from a bug.
     leadStatusSnapshot: store.getArboxState().leadStatusSnapshot || null,
     notifiedLeadKeys: (store.getArboxState().notifiedLeadNoResponseKeys || []).length,
+    monitorLastRun: arboxMonitor.lastRun,
     sendsVia: process.env.D360_API_KEY ? "360dialog" : "graph",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
     arboxConfigured: Boolean(process.env.ARBOX_API_KEY),
