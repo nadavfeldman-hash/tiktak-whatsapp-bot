@@ -26,7 +26,7 @@ app.use("/admin", adminPanel);
 // variables set in the Render dashboard cannot be read from anywhere else, so
 // without this every "did the toggle take effect?" question turns into guesswork
 // and screenshots. Booleans and one date only - no secrets.
-app.get("/health", (req, res) => {
+app.get("/status", (req, res) => {
   const override = process.env.ENABLE_CUSTOMER_AUTOMATIONS;
   res.json({
     autoReply: process.env.ENABLE_AUTO_REPLY === "true",
