@@ -17,6 +17,31 @@ function authHeaders() {
   return { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` };
 }
 
+// A last line of defence in front of every template send, whatever called it.
+//
+// Guards on individual automations kept missing one: the weekly attendance
+// summary had none, so switching automations on sent it to every member at
+// once, and three leads written to by hand were then messaged again by the new
+// lead check. Per-automation guards are easy to forget; this one is impossible
+// to route around, because everything goes through here.
+const DUPLICATE_WINDOW_DAYS = 7;
+
+function recentlySent(to, templateName) {
+  const store = require("./store");
+  const log = store.getArboxState().sentTemplateLog || {};
+  const at = log[`${to}:${templateName}`];
+  if (!at) return false;
+  return Date.now() - new Date(at).getTime() < DUPLICATE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+}
+
+function recordSent(to, templateName) {
+  const store = require("./store");
+  const state = store.getArboxState();
+  const log = state.sentTemplateLog || {};
+  log[`${to}:${templateName}`] = new Date().toISOString();
+  store.setArboxState({ ...state, sentTemplateLog: log });
+}
+
 async function sendText(to, body) {
   const res = await fetch(apiUrl(), {
     method: "POST",
@@ -44,6 +69,11 @@ async function sendText(to, body) {
 // that window). `params` are plain strings filled into the template's {{1}},
 // {{2}}, ... slots in order.
 async function sendTemplate(to, templateName, params = []) {
+  if (recentlySent(to, templateName)) {
+    console.log(`Skipping duplicate template ${templateName} to ${to} (sent within ${DUPLICATE_WINDOW_DAYS} days)`);
+    return null;
+  }
+
   const res = await fetch(apiUrl(), {
     method: "POST",
     headers: {
@@ -69,6 +99,7 @@ async function sendTemplate(to, templateName, params = []) {
     console.error("WhatsApp template send failed:", res.status, errText);
     throw new Error(`WhatsApp template send failed: ${res.status} ${errText}`);
   }
+  recordSent(to, templateName);
   return res;
 }
 

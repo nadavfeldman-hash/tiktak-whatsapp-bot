@@ -579,6 +579,17 @@ async function checkAttendanceTrends() {
   const now = new Date();
   if (lastRun && now - lastRun < 7 * 24 * 60 * 60 * 1000) return;
 
+  // The weekly summary goes to every active member at once, so on the very
+  // first run after automations are switched on it is a mass send to people who
+  // were never told to expect it. That happened. It now stays silent on its
+  // first pass and only records the date, so the first real summary goes out a
+  // week later, as a weekly summary should.
+  if (!lastRun) {
+    console.log("Attendance trends: first run - recording the date and staying silent this week.");
+    store.setArboxState({ ...state, lastAttendanceTrendCheckDate: now.toISOString() });
+    return;
+  }
+
   const fmt = (d) => d.toISOString().slice(0, 10);
   const weekAgo = new Date(now);
   weekAgo.setDate(weekAgo.getDate() - 7);
