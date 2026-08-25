@@ -58,6 +58,9 @@ app.get("/status", (req, res) => {
     dataDir: store.dataDir,
     dataDirIsPersistent: store.dataDir === "/var/data" || Boolean(process.env.DATA_DIR),
     stateKeys: Object.keys(store.getArboxState()),
+    weeklySummary: {
+      lastRun: store.getArboxState().lastAttendanceTrendCheckDate || null,
+    },
     sendsVia: process.env.D360_API_KEY ? "360dialog" : "graph",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
     arboxConfigured: Boolean(process.env.ARBOX_API_KEY),
