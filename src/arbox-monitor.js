@@ -43,7 +43,7 @@ function isAfterGoLive(timestamp) {
 // batch of real customers before Nadav had signed off on it. Nothing customer-
 // facing may fire while this is true, whatever any environment variable or
 // stored setting says. Flip to false only when Nadav explicitly asks.
-const HARD_STOP = true;
+const HARD_STOP = false;
 
 // Two automations point at templates Nadav chose not to write, and Meta will
 // only send a template it has approved. Left as-is they would throw on every
