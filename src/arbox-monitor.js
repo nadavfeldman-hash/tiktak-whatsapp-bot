@@ -45,6 +45,16 @@ function isAfterGoLive(timestamp) {
 // stored setting says. Flip to false only when Nadav explicitly asks.
 const HARD_STOP = false;
 
+// Two automations point at templates Nadav chose not to write, and Meta will
+// only send a template it has approved. Left as-is they would throw on every
+// trigger - a payment fails, a coach is swapped, and the check dies silently in
+// a catch. They stay off until their wording exists and is approved.
+const AUTOMATIONS_WITHOUT_TEMPLATES = new Set(["failed payments", "coach replacements"]);
+
+function hasTemplate(automationName) {
+  return !AUTOMATIONS_WITHOUT_TEMPLATES.has(automationName);
+}
+
 function customerAutomationsEnabled() {
   if (HARD_STOP) return false;
   // ENABLE_CUSTOMER_AUTOMATIONS is a hard override in BOTH directions. It used
@@ -241,6 +251,7 @@ async function checkBirthdays() {
 }
 
 async function checkFailedPayments() {
+  if (!hasTemplate("failed payments")) return;
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
@@ -285,50 +296,53 @@ async function checkNewMembers() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
-  const isFirstRun = state.lastConvertedUserId === undefined;
-  const lastSeenId = state.lastConvertedUserId || 0;
+  // Tracked as a set of people already welcomed rather than "the highest user_id
+  // seen so far". Arbox returns converted leads unordered, and a user_id is
+  // assigned when the lead is first created, not when they join - so a
+  // long-standing lead who signs up today carries an old, low id, falls under
+  // any high-water mark, and is never welcomed at all. A silent miss, which is
+  // exactly the kind that goes unnoticed.
+  const welcomed = new Set(state.welcomedUserIds || []);
+  const isFirstRun = state.welcomedUserIds === undefined;
 
   const result = await arbox.getConvertedLeads({ limit: 50 });
   const converted = result.data || [];
 
-  const newOnes = converted.filter((c) => c.user_id > lastSeenId);
-  const maxId = converted.reduce((max, c) => Math.max(max, c.user_id), lastSeenId);
-
-  if (!isFirstRun) {
-    for (const c of newOnes) {
-      if (c.phone) {
-        await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name]);
-        await sleep(PACE_MS);
-      }
+  for (const c of converted) {
+    if (welcomed.has(String(c.user_id))) continue;
+    if (!isFirstRun && c.phone) {
+      await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name]);
+      await sleep(PACE_MS);
     }
+    welcomed.add(String(c.user_id));
   }
 
-  store.setArboxState({ ...state, lastConvertedUserId: maxId });
+  store.setArboxState({ ...state, welcomedUserIds: Array.from(welcomed) });
 }
 
 async function checkLostLeads() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
-  const isFirstRun = state.lastLostUserId === undefined;
-  const lastSeenId = state.lastLostUserId || 0;
+  // Same reasoning as the welcome check: track who has been said goodbye to,
+  // not the highest id seen, because the list is unordered and ids predate the
+  // event.
+  const saidGoodbye = new Set(state.saidGoodbyeUserIds || []);
+  const isFirstRun = state.saidGoodbyeUserIds === undefined;
 
   const result = await arbox.getLostLeads({ limit: 50 });
   const lost = result.data || [];
 
-  const newOnes = lost.filter((c) => c.user_id > lastSeenId);
-  const maxId = lost.reduce((max, c) => Math.max(max, c.user_id), lastSeenId);
-
-  if (!isFirstRun) {
-    for (const c of newOnes) {
-      if (c.phone) {
-        await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name]);
-        await sleep(PACE_MS);
-      }
+  for (const c of lost) {
+    if (saidGoodbye.has(String(c.user_id))) continue;
+    if (!isFirstRun && c.phone) {
+      await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name]);
+      await sleep(PACE_MS);
     }
+    saidGoodbye.add(String(c.user_id));
   }
 
-  store.setArboxState({ ...state, lastLostUserId: maxId });
+  store.setArboxState({ ...state, saidGoodbyeUserIds: Array.from(saidGoodbye) });
 }
 
 function isTrialRegistration(reg) {
@@ -681,6 +695,7 @@ async function checkCoachTrialNotices() {
 // snapshotting today's + tomorrow's schedule each run and diffing against the
 // previous snapshot - Arbox has no "replacement" event/webhook of its own.
 async function checkCoachReplacements() {
+  if (!hasTemplate("coach replacements")) return;
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
