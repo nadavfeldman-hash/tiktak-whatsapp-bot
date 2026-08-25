@@ -51,6 +51,9 @@ app.get("/status", (req, res) => {
     leadStatusSnapshot: store.getArboxState().leadStatusSnapshot || null,
     notifiedLeadKeys: (store.getArboxState().notifiedLeadNoResponseKeys || []).length,
     monitorLastRun: arboxMonitor.lastRun,
+    // Exactly what was sent, to whom, and when. Without this, "who got four
+    // messages and why" can only be guessed at from the outside.
+    sentTemplateLog: store.getArboxState().sentTemplateLog || {},
     sendsVia: process.env.D360_API_KEY ? "360dialog" : "graph",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
     arboxConfigured: Boolean(process.env.ARBOX_API_KEY),
