@@ -481,7 +481,8 @@ async function checkAbsences() {
     // Only the last stage names how many days it has been.
     const params =
       template === "absence_reminder_3" ? [person.first_name, String(daysAgo)] : [person.first_name];
-    await whatsapp.sendTemplate(person.phone.replace("+", ""), template, params);
+    const r = await whatsapp.sendTemplate(person.phone.replace("+", ""), template, params);
+    if (r === null) continue; // blocked by a guard - do not retire the reminder
     await sleep(PACE_MS);
     notifiedKeys.add(key);
     changed = true;
@@ -540,7 +541,12 @@ async function checkLeadNoResponse() {
     // that status change IS the trigger - the message goes out immediately
     // rather than waiting for a cooling-off period.
     const template = LEAD_NO_RESPONSE_TEMPLATES[stage - 1];
-    await whatsapp.sendTemplate(lead.phone.replace("+", ""), template, [lead.first_name || ""]);
+    const result = await whatsapp.sendTemplate(lead.phone.replace("+", ""), template, [lead.first_name || ""]);
+    // sendTemplate returns null when a guard blocked it - typically the
+    // per-person daily cooldown. Marking that as "notified" would retire the
+    // message permanently, so the lead would never hear from us even once the
+    // cooldown lapsed. Only a message that actually left counts.
+    if (result === null) continue;
     await sleep(PACE_MS);
     notifiedKeys.add(key);
     changed = true;
@@ -807,11 +813,12 @@ async function checkLateCancellations() {
     // They rebooked that same day - nothing to say.
     if (registeredByDate.get(c.date).has(String(c.user_id))) continue;
 
-    await whatsapp.sendTemplate(c.phone.replace("+", ""), "late_cancellation_callout", [
+    const r = await whatsapp.sendTemplate(c.phone.replace("+", ""), "late_cancellation_callout", [
       c.first_name || "",
       c.class_name || "אימון",
       `${c.date || ""} ${(c.start_time || "").slice(0, 5)}`.trim(),
     ]);
+    if (r === null) continue;
     await sleep(PACE_MS);
     notifiedKeys.add(key);
     changed = true;
