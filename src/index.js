@@ -33,7 +33,17 @@ app.get("/status", (req, res) => {
     customerAutomations: {
       envOverride: override === undefined ? null : override,
       storedSetting: !!store.getSettings().customerAutomationsEnabled,
-      effective: override === "false" ? false : override === "true" ? true : !!store.getSettings().customerAutomationsEnabled,
+      // HARD_STOP in arbox-monitor beats every other switch, so it has to be
+      // part of "effective" here too - reporting true while the code refuses to
+      // send is exactly the kind of mismatch that caused trouble already.
+      hardStop: Boolean(arboxMonitor.HARD_STOP_ACTIVE),
+      effective: arboxMonitor.HARD_STOP_ACTIVE
+        ? false
+        : override === "false"
+          ? false
+          : override === "true"
+            ? true
+            : !!store.getSettings().customerAutomationsEnabled,
     },
     automationsStartFrom: process.env.AUTOMATIONS_START_DATE || "built-in default",
     // What the monitor currently believes each lead's status is. Without seeing
