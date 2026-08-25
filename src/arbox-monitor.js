@@ -541,7 +541,15 @@ async function checkLeadNoResponse() {
     // that status change IS the trigger - the message goes out immediately
     // rather than waiting for a cooling-off period.
     const template = LEAD_NO_RESPONSE_TEMPLATES[stage - 1];
-    const result = await whatsapp.sendTemplate(lead.phone.replace("+", ""), template, [lead.first_name || ""]);
+    // Nadav moved this lead's status himself, so it is a deliberate act rather
+    // than an automation's own inference - it is not held back by the blanket
+    // protection or the daily cooldown, only by the no-repeats rule.
+    const result = await whatsapp.sendTemplate(
+      lead.phone.replace("+", ""),
+      template,
+      [lead.first_name || ""],
+      { deliberate: true }
+    );
     // sendTemplate returns null when a guard blocked it - typically the
     // per-person daily cooldown. Marking that as "notified" would retire the
     // message permanently, so the lead would never hear from us even once the

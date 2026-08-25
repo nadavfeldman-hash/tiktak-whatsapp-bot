@@ -37,7 +37,14 @@ function sentLog() {
 }
 
 // Returns the reason to skip, or null to allow.
-function skipReason(to, templateName) {
+//
+// `deliberate` marks a message Nadav triggered himself by moving a lead's status
+// in Arbox, as opposed to one an automation decided on its own from a passive
+// condition like an absence or a birthday. A deliberate message always goes:
+// he has just acted on that person and expects them to hear from us, so the
+// daily cooldown and the blanket protection do not apply to it. The
+// same-template rule still does, so nobody ever gets the same words twice.
+function skipReason(to, templateName, { deliberate = false } = {}) {
   const log = sentLog();
   const now = Date.now();
 
@@ -45,6 +52,8 @@ function skipReason(to, templateName) {
   if (sameTemplate && now - new Date(sameTemplate).getTime() < DUPLICATE_WINDOW_DAYS * 24 * 60 * 60 * 1000) {
     return `already sent this template within ${DUPLICATE_WINDOW_DAYS} days`;
   }
+
+  if (deliberate) return null;
 
   // Any template at all to this person recently.
   const lastAny = Object.entries(log)
@@ -92,8 +101,8 @@ async function sendText(to, body) {
 // hasn't messaged us in the last 24h (WhatsApp blocks free-form text outside
 // that window). `params` are plain strings filled into the template's {{1}},
 // {{2}}, ... slots in order.
-async function sendTemplate(to, templateName, params = []) {
-  const skip = skipReason(to, templateName);
+async function sendTemplate(to, templateName, params = [], options = {}) {
+  const skip = skipReason(to, templateName, options);
   if (skip) {
     console.log(`Skipping ${templateName} to ${to}: ${skip}`);
     return null;
