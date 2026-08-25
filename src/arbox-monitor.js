@@ -23,7 +23,7 @@ const PACE_MS = 1200;
 //
 // A fixed date rather than "first boot" on purpose: a redeploy or a wiped disk
 // must not make the whole history look new again.
-const AUTOMATIONS_START = new Date(process.env.AUTOMATIONS_START_DATE || "2026-08-24T17:44:57");
+const AUTOMATIONS_START = new Date(process.env.AUTOMATIONS_START_DATE || "2026-08-25T11:32:38");
 
 // Did this happen after we went live? Anything unparseable counts as old, so
 // missing timestamps stay silent rather than triggering a message.
@@ -37,7 +37,7 @@ function isAfterGoLive(timestamp) {
 // batch of real customers before Nadav had signed off on it. Nothing customer-
 // facing may fire while this is true, whatever any environment variable or
 // stored setting says. Flip to false only when Nadav explicitly asks.
-const HARD_STOP = true;
+const HARD_STOP = false;
 
 function customerAutomationsEnabled() {
   if (HARD_STOP) return false;
@@ -77,7 +77,11 @@ async function checkNewLeads() {
     if (isFirstRun) break; // don't spam alerts for existing history on first run ever
     await whatsapp.sendText(ADMIN_PHONE, formatLeadAlert(lead));
 
-    if (customerAutomationsEnabled() && lead.phone) {
+    // Same go-live rule as every other automation: only leads created after we
+    // switched on get an automatic welcome. Without this, turning automations on
+    // re-messages everyone already in the list - including three leads that had
+    // just been written to by hand.
+    if (customerAutomationsEnabled() && lead.phone && isAfterGoLive(lead.created_time)) {
       try {
         await whatsapp.sendTemplate(lead.phone.replace("+", ""), "new_lead_details_request_v2", [
           lead.first_name || "",
