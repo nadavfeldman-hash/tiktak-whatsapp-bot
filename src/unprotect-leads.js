@@ -27,16 +27,28 @@ async function unprotectStatusLeads() {
     }
   }
 
+  // Two leads were marked as already-notified while a guard was silently
+  // blocking their message, so they would be skipped forever. Unprotecting
+  // someone has to clear that mark too, or nothing changes for them.
+  const stillNotified = (state.notifiedLeadNoResponseKeys || []).filter((key) => {
+    const userId = String(key).split(":")[0];
+    return !targets.some((l) => String(l.user_id) === userId);
+  });
+  const clearedMarks = (state.notifiedLeadNoResponseKeys || []).length - stillNotified.length;
+
   // Written directly rather than through the merging setter, which by design
   // never lets this log lose entries.
   const fs = require("fs");
   const path = require("path");
   const file = path.join(store.dataDir, "arbox-state.json");
   const current = JSON.parse(fs.readFileSync(file, "utf8"));
-  fs.writeFileSync(file, JSON.stringify({ ...current, sentTemplateLog: log }, null, 2));
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ ...current, sentTemplateLog: log, notifiedLeadNoResponseKeys: stillNotified }, null, 2)
+  );
 
-  console.log(`Unprotected ${removed} leads in a "ללא מענה" status.`);
-  return { removed, considered: targets.length };
+  console.log(`Unprotected ${removed} leads in a "ללא מענה" status, clearing ${clearedMarks} stale notified marks.`);
+  return { removed, considered: targets.length, clearedMarks };
 }
 
 module.exports = { unprotectStatusLeads };
