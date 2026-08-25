@@ -55,7 +55,8 @@ app.get("/status", (req, res) => {
     // messages and why" can only be guessed at from the outside.
     sentTemplateLog: store.getArboxState().sentTemplateLog || {},
     // Where state is written, and whether that path survived the last restart.
-    dataDir: process.env.DATA_DIR || "(not set - using ./data inside the container)",
+    dataDir: store.dataDir,
+    dataDirIsPersistent: store.dataDir === "/var/data" || Boolean(process.env.DATA_DIR),
     stateKeys: Object.keys(store.getArboxState()),
     sendsVia: process.env.D360_API_KEY ? "360dialog" : "graph",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,

@@ -1,9 +1,31 @@
 const fs = require("fs");
 const path = require("path");
 
-// Overridable so production hosting can point this at a persistent disk
-// mount instead of the app's own (often ephemeral) working directory.
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
+// Where state lives, in order of preference: an explicit DATA_DIR, then the
+// persistent disk Render mounts at /var/data, then the working directory.
+//
+// This ordering is not a nicety. render.yaml declares that disk, but DATA_DIR
+// was never set in the Render dashboard, so everything was being written inside
+// the container - and a container's filesystem is discarded on every deploy.
+// Each deploy therefore wiped the bot's entire memory: who had been messaged,
+// who had been handled, which leads were already known. The automations then
+// saw every member and lead as brand new and messaged them again. Every fix
+// pushed caused a deploy, which caused another wipe, which caused another round
+// of messages - one customer received four. Falling back to the mounted disk
+// when it exists makes the memory survive deploys without depending on a
+// dashboard setting anyone has to remember.
+function resolveDataDir() {
+  if (process.env.DATA_DIR) return process.env.DATA_DIR;
+  const renderDisk = "/var/data";
+  try {
+    if (fs.existsSync(renderDisk)) return renderDisk;
+  } catch {
+    // not on Render, or no permission - fall through to the local directory
+  }
+  return path.join(__dirname, "..", "data");
+}
+
+const DATA_DIR = resolveDataDir();
 const CONVERSATIONS_FILE = path.join(DATA_DIR, "conversations.json");
 const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const TICKETS_FILE = path.join(DATA_DIR, "tickets.json");
@@ -119,6 +141,7 @@ function setSetting(key, value) {
 }
 
 module.exports = {
+  dataDir: DATA_DIR,
   getConversation,
   saveConversation,
   resetConversation,
