@@ -51,6 +51,13 @@ const HARD_STOP = false;
 // a catch. They stay off until their wording exists and is approved.
 const AUTOMATIONS_WITHOUT_TEMPLATES = new Set(["failed payments", "coach replacements"]);
 
+// The weekly attendance summary is off for good, by Nadav's decision. It is the
+// only automation that writes to every active member on the same day, and it is
+// what caused the day's worst damage - a mass send, then repeats, then reports
+// of "0 workouts this week" landing on people who had already left. A digest
+// that reaches everyone at once has no margin for error, and he does not want it.
+const WEEKLY_SUMMARY_DISABLED = true;
+
 function hasTemplate(automationName) {
   return !AUTOMATIONS_WITHOUT_TEMPLATES.has(automationName);
 }
@@ -606,6 +613,7 @@ function countRegistrationsByUser(sessions) {
 }
 
 async function checkAttendanceTrends() {
+  if (WEEKLY_SUMMARY_DISABLED) return;
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
