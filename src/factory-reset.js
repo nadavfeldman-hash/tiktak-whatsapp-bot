@@ -25,6 +25,13 @@ const WIPE_FILES = [
 ];
 
 async function factoryReset() {
+  // The record of who has already been messaged is the one thing a reset must
+  // NOT destroy. Wiping it alongside everything else is what made repeated
+  // resets send the same people the same messages again - one customer received
+  // four. "Start from zero" means forget who still needs contacting, never
+  // forget who has already been contacted.
+  const preservedSendLog = store.getArboxState().sentTemplateLog || {};
+
   const wiped = [];
   for (const name of WIPE_FILES) {
     const file = path.join(DATA_DIR, name);
@@ -38,9 +45,10 @@ async function factoryReset() {
     }
   }
 
-  // The new starting line, written before anything else runs.
+  // The new starting line, written before anything else runs - carrying the
+  // send history straight back in.
   const startedAt = new Date().toISOString();
-  store.setArboxState({ automationsStartFrom: startedAt });
+  store.setArboxState({ automationsStartFrom: startedAt, sentTemplateLog: preservedSendLog });
 
   // Walk every check once with sending disabled, so today's members, leads and
   // absences are all recorded as already handled.
@@ -70,9 +78,14 @@ async function factoryReset() {
   whatsapp.sendText = realText;
   whatsapp.sendTemplate = realTemplate;
 
-  // Re-assert the starting line: the checks above wrote their own state on top.
+  // Re-assert the starting line and the send history: the checks above wrote
+  // their own state on top.
   const state = store.getArboxState();
-  store.setArboxState({ ...state, automationsStartFrom: startedAt });
+  store.setArboxState({
+    ...state,
+    automationsStartFrom: startedAt,
+    sentTemplateLog: { ...preservedSendLog, ...(state.sentTemplateLog || {}) },
+  });
 
   console.log(
     `Factory reset complete. Cleared: ${wiped.join(", ")}. ` +
