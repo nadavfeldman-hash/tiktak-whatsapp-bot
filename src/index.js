@@ -54,6 +54,9 @@ app.get("/status", (req, res) => {
     // Exactly what was sent, to whom, and when. Without this, "who got four
     // messages and why" can only be guessed at from the outside.
     sentTemplateLog: store.getArboxState().sentTemplateLog || {},
+    // Where state is written, and whether that path survived the last restart.
+    dataDir: process.env.DATA_DIR || "(not set - using ./data inside the container)",
+    stateKeys: Object.keys(store.getArboxState()),
     sendsVia: process.env.D360_API_KEY ? "360dialog" : "graph",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
     arboxConfigured: Boolean(process.env.ARBOX_API_KEY),
