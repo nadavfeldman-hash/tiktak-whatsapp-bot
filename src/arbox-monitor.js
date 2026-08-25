@@ -33,7 +33,14 @@ function isAfterGoLive(timestamp) {
   return !isNaN(t) && t >= AUTOMATIONS_START;
 }
 
+// EMERGENCY STOP, 25 Aug 2026. Automations went live and immediately messaged a
+// batch of real customers before Nadav had signed off on it. Nothing customer-
+// facing may fire while this is true, whatever any environment variable or
+// stored setting says. Flip to false only when Nadav explicitly asks.
+const HARD_STOP = true;
+
 function customerAutomationsEnabled() {
+  if (HARD_STOP) return false;
   // ENABLE_CUSTOMER_AUTOMATIONS is a hard override in BOTH directions. It used
   // to be able only to turn things on, falling through to the stored setting
   // otherwise - which meant a stale "true" on the server's own disk could send
