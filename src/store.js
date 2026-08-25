@@ -82,7 +82,17 @@ function getArboxState() {
 // each check's own keys intact.
 function setArboxState(state) {
   const current = readJson(ARBOX_STATE_FILE, {});
-  writeJson(ARBOX_STATE_FILE, { ...current, ...state });
+  const merged = { ...current, ...state };
+
+  // sentTemplateLog is the record of who must not be messaged again, and it is
+  // the one key that must never shrink. A top-level merge is not enough for it:
+  // a check that read the state a moment earlier writes its whole stale copy
+  // back, and that copy's older, smaller log replaces the current one wholesale.
+  // That silently erased protection for 230 people once. Merged key by key, and
+  // never allowed to lose entries.
+  merged.sentTemplateLog = { ...(current.sentTemplateLog || {}), ...(state.sentTemplateLog || {}) };
+
+  writeJson(ARBOX_STATE_FILE, merged);
 }
 
 function getAppointments() {
