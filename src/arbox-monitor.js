@@ -617,6 +617,14 @@ async function checkAttendanceTrends() {
     const currentCount = current?.count || 0;
     const previousCount = previous?.count || 0;
     if (currentCount === 0 && previousCount === 0) continue;
+
+    // Nobody who did not train at all this week gets a weekly summary. Someone
+    // who trained a fortnight ago and stopped would otherwise be sent a report
+    // telling them they did nothing - a former member being handed a scorecard
+    // of their own absence. That happened, and it reads badly. People who have
+    // drifted are the absence reminders' job, not this one's.
+    if (currentCount === 0) continue;
+
     const info = current || previous;
     if (!info?.phone) continue;
 
