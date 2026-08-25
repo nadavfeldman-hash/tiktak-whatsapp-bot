@@ -199,6 +199,7 @@ function sidebar(activePage) {
     <a href="/admin/dashboard#notes" class="nav-item"><span class="nav-icon">🧠</span><span>מה הבוט למד</span></a>
     <a href="/admin/dashboard#automations" class="nav-item"><span class="nav-icon">⚙️</span><span>אוטומציות</span></a>
     <a href="/admin/dashboard#broadcast" class="nav-item"><span class="nav-icon">📢</span><span>הודעה כללית</span></a>
+    <a href="/admin/coaches" class="nav-item${activePage === "coaches" ? " active" : ""}"><span class="nav-icon">🔄</span><span>החלפת מאמן</span></a>
     <div class="sidebar-footer">
       <form method="POST" action="/admin/logout"><button class="btn-ghost" style="width:100%" type="submit">התנתקות</button></form>
     </div>
@@ -637,5 +638,7 @@ router.get("/dashboard", requireAuth, async (req, res) => {
     )
   );
 });
+
+require("./admin-coaches").register(router, { requireAuth, layout, sidebar });
 
 module.exports = router;
