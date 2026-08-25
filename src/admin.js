@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const store = require("./store");
 const arbox = require("./arbox");
 const whatsapp = require("./whatsapp");
+const systemStatus = require("./system-status");
 
 const router = express.Router();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -404,6 +405,77 @@ router.get("/dashboard", requireAuth, async (req, res) => {
 
   const automationsOn = !!settings.customerAutomationsEnabled;
 
+  // The two questions that actually matter - can the bot answer people, and can
+  // it start conversations - answered from the real state of every switch
+  // rather than from any single one of them.
+  let sys = null;
+  try {
+    sys = await systemStatus.collect();
+  } catch (e) {
+    console.error("System status failed:", e.message);
+  }
+
+  const statusRow = (label, on, detail, where) => `
+    <tr>
+      <td><strong>${esc(label)}</strong></td>
+      <td><span class="badge ${on ? "on" : "off"}"><span class="dot"></span>${on ? "פעיל" : "כבוי"}</span></td>
+      <td class="muted">${detail}</td>
+      <td class="muted" style="font-size:12px">${esc(where)}</td>
+    </tr>`;
+
+  const systemSection = !sys
+    ? `<div class="empty-state">לא ניתן היה לקרוא את מצב המערכת כרגע</div>`
+    : `<table class="table">
+        <thead><tr><th>מה</th><th>מצב</th><th>פירוט</th><th>נשלט מ-</th></tr></thead>
+        <tbody>
+          ${statusRow(
+            "מענה לפניות נכנסות",
+            sys.replies.on,
+            sys.replies.switchOn
+              ? sys.replies.webhookPointsAtUs
+                ? "הבוט עונה למי שכותב"
+                : "המתג דלוק אך ה-webhook לא מפנה לכאן"
+              : "המתג כבוי",
+            sys.replies.livesIn
+          )}
+          ${statusRow(
+            "הודעות יזומות (אוטומציות)",
+            sys.automations.on,
+            sys.automations.hardStop
+              ? "עצירה קשה פעילה בקוד - גוברת על הכל"
+              : sys.automations.on
+                ? "הבוט יוזם פניות ללקוחות"
+                : "כבוי",
+            sys.automations.livesIn
+          )}
+          <tr>
+            <td><strong>תבניות</strong></td>
+            <td><span class="badge ${sys.templates.approved > 0 ? "on" : "off"}"><span class="dot"></span>${sys.templates.approved} מאושרות</span></td>
+            <td class="muted">${sys.templates.pending} בבדיקה${sys.templates.rejected ? ` · ${sys.templates.rejected} נדחו` : ""}</td>
+            <td class="muted" style="font-size:12px">${esc(sys.templates.livesIn)}</td>
+          </tr>
+          <tr>
+            <td><strong>המספר אצל Meta</strong></td>
+            <td><span class="badge ${sys.number.canSend === "AVAILABLE" ? "on" : "neutral"}"><span class="dot"></span>${esc(sys.number.canSend || "לא ידוע")}</span></td>
+            <td class="muted">${sys.number.businessError ? esc(sys.number.businessError) : "תקין"}</td>
+            <td class="muted" style="font-size:12px">${esc(sys.number.livesIn)}</td>
+          </tr>
+          ${
+            sys.checks.failing.length
+              ? sys.checks.failing
+                  .map(
+                    (f) => `<tr>
+                      <td><strong>⚠️ ${esc(f.name)}</strong></td>
+                      <td><span class="badge off"><span class="dot"></span>נכשלה</span></td>
+                      <td class="muted" colspan="2">${esc(String(f.error).slice(0, 160))}</td>
+                    </tr>`
+                  )
+                  .join("")
+              : ""
+          }
+        </tbody>
+      </table>`;
+
   let broadcastBanner = "";
   if (req.query.broadcast === "started") {
     broadcastBanner = `<div class="card card-pad" style="margin-bottom:14px;background:var(--green-soft);color:var(--green);">נשלח בתהליך ל-${esc(req.query.count)} לקוחות (בקצב איטי, ייקח כמה דקות).</div>`;
@@ -434,6 +506,14 @@ router.get("/dashboard", requireAuth, async (req, res) => {
           <div class="stat-card"><div class="stat-icon">✨</div><div class="stat-label">לידים חדשים היום</div><div class="stat-value">${newLeadsToday}</div></div>
           <div class="stat-card"><div class="stat-icon">📅</div><div class="stat-label">תורים שנקבעו</div><div class="stat-value">${appointments.length}</div></div>
           <div class="stat-card"><div class="stat-icon">🎫</div><div class="stat-label">פניות פתוחות</div><div class="stat-value">${openTickets}</div></div>
+        </div>
+
+        <div class="section" id="system">
+          <div class="section-header">
+            <div class="section-title">🚦 מצב המערכת</div>
+            <div class="page-sub" style="margin:0">מה פעיל עכשיו, ואיפה משנים כל דבר</div>
+          </div>
+          ${systemSection}
         </div>
 
         <div class="section" id="leads">

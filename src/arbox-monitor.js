@@ -909,6 +909,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
 
 module.exports = {
   lastRun,
+  HARD_STOP_ACTIVE: HARD_STOP,
   startMonitoring,
   checkNewLeads,
   checkDebtReport,
