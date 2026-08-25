@@ -43,7 +43,7 @@ function isAfterGoLive(timestamp) {
 // batch of real customers before Nadav had signed off on it. Nothing customer-
 // facing may fire while this is true, whatever any environment variable or
 // stored setting says. Flip to false only when Nadav explicitly asks.
-const HARD_STOP = true;
+const HARD_STOP = false;
 
 function customerAutomationsEnabled() {
   if (HARD_STOP) return false;
