@@ -52,26 +52,45 @@ async function preview(params) {
   };
 }
 
+// Arbox returns HTTP 500 on this endpoint even when the update succeeds. We
+// confirmed it: 36 PATCH calls all returned 500, and a GET afterwards showed
+// every one of the 36 sessions correctly reassigned. Their support has been
+// told; until they fix it, believing the status code would report a completed
+// swap as a total failure - and tempt anyone into retrying an operation that
+// already happened.
+//
+// So the result is verified against the data rather than the response: after
+// the writes, re-read the schedule and count who actually teaches those
+// sessions now. That is true regardless of what the API claims.
 async function apply(params) {
   const { newCoachId } = params;
   if (!newCoachId) throw new Error("צריך לבחור מאמן חדש");
 
   const sessions = await findSessions(params);
-  const changed = [];
-  const failed = [];
+  const attempted = sessions.map((s) => s.schedule_id);
 
   for (const s of sessions) {
     try {
       await arbox.updateScheduleStaff(s.schedule_id, Number(newCoachId));
-      changed.push(s.schedule_id);
     } catch (e) {
-      failed.push({ scheduleId: s.schedule_id, error: e.message });
-      console.error(`Coach swap failed for schedule ${s.schedule_id}:`, e.message);
+      // Expected while the endpoint misreports - verification below is what counts.
+      console.log(`Coach swap: schedule ${s.schedule_id} returned an error, will verify (${e.message.slice(0, 60)})`);
     }
   }
 
-  console.log(`Coach swap: ${changed.length} sessions reassigned, ${failed.length} failed.`);
-  return { changed: changed.length, failed };
+  const after = await findSessions({ ...params, currentCoachId: null });
+  const stillWrong = after.filter((s) => {
+    if (!attempted.includes(s.schedule_id)) return false;
+    const staffId = s.staff_member?.user_id ?? s.staff_member?.id;
+    return String(staffId) !== String(newCoachId);
+  });
+
+  const changed = attempted.length - stillWrong.length;
+  console.log(`Coach swap: ${changed}/${attempted.length} sessions verified as reassigned.`);
+  return {
+    changed,
+    failed: stillWrong.map((s) => ({ scheduleId: s.schedule_id, error: "לא הוחלף" })),
+  };
 }
 
 module.exports = { preview, apply, findSessions };
