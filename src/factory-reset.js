@@ -50,6 +50,32 @@ async function factoryReset() {
   const startedAt = new Date().toISOString();
   store.setArboxState({ automationsStartFrom: startedAt, sentTemplateLog: preservedSendLog });
 
+  // Belt and braces on top of the per-automation bookkeeping: every phone number
+  // that exists in Arbox right now is stamped into the send log as though it had
+  // just been messaged. The per-person cooldown then refuses to contact any of
+  // them, whatever any check decides. Only people who appear after this moment
+  // can receive anything - which is precisely what "start from zero" has to mean
+  // after the same customers were messaged repeatedly.
+  const arbox = require("./arbox");
+  const stamp = new Date().toISOString();
+  const seededLog = { ...preservedSendLog };
+  let seededPeople = 0;
+  try {
+    const [leads, members] = await Promise.all([
+      arbox.getLeads({ limit: 200 }).then((r) => r.data || []).catch(() => []),
+      arbox.getAllActiveMembers().catch(() => []),
+    ]);
+    for (const person of [...leads, ...members]) {
+      const phone = String(person.phone || "").replace(/\D/g, "");
+      if (!phone) continue;
+      seededLog[`${phone}:__existing_at_reset__`] = stamp;
+      seededPeople++;
+    }
+  } catch (e) {
+    console.error("Factory reset: could not seed the send log -", e.message);
+  }
+  store.setArboxState({ ...store.getArboxState(), sentTemplateLog: seededLog });
+
   // Walk every check once with sending disabled, so today's members, leads and
   // absences are all recorded as already handled.
   const realText = whatsapp.sendText;
@@ -84,16 +110,17 @@ async function factoryReset() {
   store.setArboxState({
     ...state,
     automationsStartFrom: startedAt,
-    sentTemplateLog: { ...preservedSendLog, ...(state.sentTemplateLog || {}) },
+    sentTemplateLog: { ...seededLog, ...(state.sentTemplateLog || {}) },
   });
 
   console.log(
     `Factory reset complete. Cleared: ${wiped.join(", ")}. ` +
       `${suppressed} message(s) the existing situation would have triggered were suppressed. ` +
+      `${seededPeople} existing people were stamped as already contacted. ` +
       `Automations now start from ${startedAt}.`
   );
 
-  return { wiped, suppressed, startedAt };
+  return { wiped, suppressed, startedAt, seededPeople };
 }
 
 module.exports = { factoryReset };

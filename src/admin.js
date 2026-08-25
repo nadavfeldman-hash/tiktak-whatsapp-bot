@@ -262,6 +262,16 @@ router.post("/factory-reset", express.urlencoded({ extended: false }), requireAu
   }
 });
 
+router.post("/protect-existing", requireAuth, async (req, res) => {
+  try {
+    const r = await require("./protect-existing").protectExisting();
+    res.redirect(`/admin/dashboard?protected=${r.protectedCount}#danger`);
+  } catch (e) {
+    console.error("Protect existing failed:", e.message);
+    res.redirect("/admin/dashboard?protected=error#danger");
+  }
+});
+
 router.post("/toggle-automations", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const settings = store.getSettings();
   store.setSetting("customerAutomationsEnabled", !settings.customerAutomationsEnabled);
