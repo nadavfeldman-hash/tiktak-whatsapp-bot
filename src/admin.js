@@ -272,6 +272,16 @@ router.post("/protect-existing", requireAuth, async (req, res) => {
   }
 });
 
+router.post("/unprotect-status-leads", requireAuth, async (req, res) => {
+  try {
+    const r = await require("./unprotect-leads").unprotectStatusLeads();
+    res.redirect(`/admin/dashboard?unprotected=${r.removed}#danger`);
+  } catch (e) {
+    console.error("Unprotect failed:", e.message);
+    res.redirect("/admin/dashboard?unprotected=error#danger");
+  }
+});
+
 router.post("/toggle-automations", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const settings = store.getSettings();
   store.setSetting("customerAutomationsEnabled", !settings.customerAutomationsEnabled);
