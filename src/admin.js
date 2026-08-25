@@ -246,6 +246,22 @@ router.post("/logout", requireAuth, (req, res) => {
   res.redirect("/admin");
 });
 
+// Wipe everything the bot remembers about customers and restart the clock, all
+// in one action - splitting the two is what makes a reset dangerous, because a
+// cleared memory with no new starting line means everyone looks new at once.
+router.post("/factory-reset", express.urlencoded({ extended: false }), requireAuth, async (req, res) => {
+  if ((req.body.confirm || "").trim() !== "אפס") {
+    return res.redirect("/admin/dashboard?reset=needsconfirm#danger");
+  }
+  try {
+    const result = await require("./factory-reset").factoryReset();
+    res.redirect(`/admin/dashboard?reset=done&suppressed=${result.suppressed}#danger`);
+  } catch (e) {
+    console.error("Factory reset failed:", e.message);
+    res.redirect("/admin/dashboard?reset=error#danger");
+  }
+});
+
 router.post("/toggle-automations", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const settings = store.getSettings();
   store.setSetting("customerAutomationsEnabled", !settings.customerAutomationsEnabled);
@@ -508,6 +524,16 @@ router.get("/dashboard", requireAuth, async (req, res) => {
           <div class="stat-card"><div class="stat-icon">🎫</div><div class="stat-label">פניות פתוחות</div><div class="stat-value">${openTickets}</div></div>
         </div>
 
+        ${
+          req.query.reset === "done"
+            ? `<div class="card card-pad" style="margin-bottom:14px;background:var(--green-soft);color:var(--green);">האיפוס הושלם. ${esc(req.query.suppressed || "0")} הודעות שהמצב הקיים היה מפעיל נחסמו ונרשמו כטופלו. מכאן — רק אירועים חדשים.</div>`
+            : req.query.reset === "needsconfirm"
+              ? `<div class="card card-pad" style="margin-bottom:14px;background:var(--red-soft);color:var(--red);">צריך להקליד את המילה "אפס" כדי לאשר.</div>`
+              : req.query.reset === "error"
+                ? `<div class="card card-pad" style="margin-bottom:14px;background:var(--red-soft);color:var(--red);">האיפוס נכשל. תראה בלוג.</div>`
+                : ""
+        }
+
         <div class="section" id="system">
           <div class="section-header">
             <div class="section-title">🚦 מצב המערכת</div>
@@ -558,6 +584,21 @@ router.get("/dashboard", requireAuth, async (req, res) => {
             </div>
             <form method="POST" action="/admin/toggle-automations">
               <button class="${automationsOn ? "btn-danger" : "btn-primary"}" type="submit">${automationsOn ? "כבה אוטומציות" : "הדלק אוטומציות"}</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="section" id="danger">
+          <div class="section-header"><div class="section-title">🔄 התחלה מאפס</div></div>
+          <div class="card card-pad">
+            <div class="toggle-desc" style="margin-bottom:10px;max-width:none;">
+              מוחק את כל מה שהבוט זוכר על לקוחות - שיחות, תורים, פניות, ומי כבר קיבל איזו הודעה -
+              וקובע את הרגע הזה כנקודת האפס. <strong>אף אחד לא יקבל הודעה על שום דבר שקרה עד עכשיו.</strong>
+              מכאן והלאה רק אירועים חדשים: מי שנרשם, מי שנעדר, מי שביטל, מי ששינה סטטוס.
+            </div>
+            <form method="POST" action="/admin/factory-reset" onsubmit="return confirm('למחוק את כל הזיכרון על הלקוחות ולהתחיל מאפס? אי אפשר לבטל.')">
+              <input type="text" name="confirm" placeholder='הקלד "אפס" כדי לאשר' style="max-width:220px" />
+              <button class="btn-danger" type="submit" style="margin-right:8px">אפס והתחל מהיום</button>
             </form>
           </div>
         </div>

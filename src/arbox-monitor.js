@@ -23,14 +23,20 @@ const PACE_MS = 1200;
 //
 // A fixed date rather than "first boot" on purpose: a redeploy or a wiped disk
 // must not make the whole history look new again.
-const AUTOMATIONS_START = new Date(process.env.AUTOMATIONS_START_DATE || "2026-08-25T11:32:38");
+// Read fresh each time rather than captured at load, so the reset button in the
+// admin panel can move it without a redeploy. Stored value wins, then the
+// environment, then the date this was first set.
+function automationsStart() {
+  const stored = store.getArboxState().automationsStartFrom;
+  return new Date(stored || process.env.AUTOMATIONS_START_DATE || "2026-08-25T11:32:38");
+}
 
 // Did this happen after we went live? Anything unparseable counts as old, so
 // missing timestamps stay silent rather than triggering a message.
 function isAfterGoLive(timestamp) {
   if (!timestamp) return false;
   const t = new Date(String(timestamp).replace(" ", "T"));
-  return !isNaN(t) && t >= AUTOMATIONS_START;
+  return !isNaN(t) && t >= automationsStart();
 }
 
 // EMERGENCY STOP, 25 Aug 2026. Automations went live and immediately messaged a
@@ -924,6 +930,8 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
 
 module.exports = {
   lastRun,
+  isAfterGoLive,
+  automationsStart,
   HARD_STOP_ACTIVE: HARD_STOP,
   startMonitoring,
   checkNewLeads,
