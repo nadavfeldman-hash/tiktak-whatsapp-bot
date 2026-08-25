@@ -25,13 +25,37 @@ function authHeaders() {
 // lead check. Per-automation guards are easy to forget; this one is impossible
 // to route around, because everything goes through here.
 const DUPLICATE_WINDOW_DAYS = 7;
+// However many automations decide someone qualifies, a person hears from us at
+// most once a day. Guarding per template name was not enough: the evening-before
+// and same-day trial reminders are two different templates, so both went to the
+// same customer within the hour and the per-template check waved them through.
+// The limit belongs to the person, not the message.
+const PER_PERSON_COOLDOWN_HOURS = 24;
 
-function recentlySent(to, templateName) {
-  const store = require("./store");
-  const log = store.getArboxState().sentTemplateLog || {};
-  const at = log[`${to}:${templateName}`];
-  if (!at) return false;
-  return Date.now() - new Date(at).getTime() < DUPLICATE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+function sentLog() {
+  return require("./store").getArboxState().sentTemplateLog || {};
+}
+
+// Returns the reason to skip, or null to allow.
+function skipReason(to, templateName) {
+  const log = sentLog();
+  const now = Date.now();
+
+  const sameTemplate = log[`${to}:${templateName}`];
+  if (sameTemplate && now - new Date(sameTemplate).getTime() < DUPLICATE_WINDOW_DAYS * 24 * 60 * 60 * 1000) {
+    return `already sent this template within ${DUPLICATE_WINDOW_DAYS} days`;
+  }
+
+  // Any template at all to this person recently.
+  const lastAny = Object.entries(log)
+    .filter(([key]) => key.startsWith(`${to}:`))
+    .map(([, at]) => new Date(at).getTime())
+    .sort((a, b) => b - a)[0];
+  if (lastAny && now - lastAny < PER_PERSON_COOLDOWN_HOURS * 60 * 60 * 1000) {
+    return `already messaged this person within ${PER_PERSON_COOLDOWN_HOURS}h`;
+  }
+
+  return null;
 }
 
 function recordSent(to, templateName) {
@@ -69,8 +93,9 @@ async function sendText(to, body) {
 // that window). `params` are plain strings filled into the template's {{1}},
 // {{2}}, ... slots in order.
 async function sendTemplate(to, templateName, params = []) {
-  if (recentlySent(to, templateName)) {
-    console.log(`Skipping duplicate template ${templateName} to ${to} (sent within ${DUPLICATE_WINDOW_DAYS} days)`);
+  const skip = skipReason(to, templateName);
+  if (skip) {
+    console.log(`Skipping ${templateName} to ${to}: ${skip}`);
     return null;
   }
 
