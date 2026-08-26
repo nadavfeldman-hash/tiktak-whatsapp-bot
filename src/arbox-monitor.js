@@ -19,8 +19,22 @@ const ADMIN_PHONE = process.env.ADMIN_PHONE;
 // already waiting, or it has already been sent). Callers that read null as "not
 // handled, look again next time" keep behaving exactly as before.
 function queueMessage(to, template, params = [], options = {}) {
+  // Arbox holds numbers in whatever shape whoever typed them used: +972...,
+  // 054-544..., 0527829504, and a couple with a stray direction mark pasted in
+  // from a spreadsheet. Every check used to do replace("+", "") and nothing
+  // else, which leaves a local 05... number that WhatsApp cannot deliver to. It
+  // fails at the far end, quietly, and the person simply never hears from us -
+  // the worst kind of fault, because it looks exactly like everything working.
+  // Normalised here, in the one place every proposal passes through, so no
+  // check can get it wrong again.
+  const phone = usablePhone(to);
+  if (!phone) {
+    console.log(`Skipping ${template}: unusable phone number ${to}`);
+    return null;
+  }
+
   return outbox.propose({
-    to,
+    to: phone,
     template,
     params,
     automation: TEMPLATE_LABELS[template] || template,
@@ -521,49 +535,152 @@ function absenceStage(daysAgo) {
   return stage;
 }
 
+// Who has stopped coming, worked out from attendance.
+//
+// This used to read Arbox's absenceReport, and that was simply the wrong list:
+// it returns only people absent 31 days or more, while these reminders look for
+// 4 to 30. The two ranges do not overlap anywhere, so the four- and eight-day
+// follow-ups could never fire, and in the whole time they were switched on they
+// never once did. Nobody noticed, because an automation that sends nothing looks
+// exactly like an automation with nothing to say.
+//
+// Attendance is counted from check-ins rather than bookings. Booking a session
+// and turning up to it are different things, and only the second one means
+// somebody is still training.
+const ABSENCE_LOOKBACK_DAYS = 35;
+const ABSENCE_FUTURE_DAYS = 14;
+
+async function fetchSessionsPaged(from, to) {
+  const all = [];
+  let page = 1;
+  while (page <= 40) {
+    const res = await arbox.getSchedule({
+      from_date: from,
+      to_date: to,
+      limit: 200,
+      page,
+      registration_details: "1",
+    });
+    all.push(...(res.data || []));
+    if (!res.extra?.pagination?.next_page_url) break;
+    page++;
+  }
+  return all;
+}
+
+// A month of sessions is a few thousand records, and asking for it in one go
+// tends to come back truncated - so it is fetched a week at a time.
+async function attendancePicture() {
+  const day = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const past = [];
+  for (let i = ABSENCE_LOOKBACK_DAYS; i > 0; i -= 7) {
+    past.push(...(await fetchSessionsPaged(day(-i), day(-Math.max(i - 7, 0)))));
+  }
+
+  const lastSeen = new Map();
+  const people = new Map();
+  for (const session of past) {
+    for (const r of session.registration_Details || []) {
+      if (r.checked_in !== 1) continue;
+      const id = String(r.user_id);
+      people.set(id, { name: r.full_name, phone: r.phone });
+      if (!lastSeen.has(id) || session.date > lastSeen.get(id)) lastSeen.set(id, session.date);
+    }
+  }
+
+  // Somebody booked into a future session has not drifted away, whatever the
+  // gap since they last came. Writing "we miss you" to a person holding a ticket
+  // for tomorrow morning is what makes a system feel like a machine.
+  const booked = new Set();
+  for (const session of await fetchSessionsPaged(day(1), day(ABSENCE_FUTURE_DAYS))) {
+    for (const r of session.registration_Details || []) booked.add(String(r.user_id));
+  }
+
+  return { lastSeen, people, booked };
+}
+
+// Arbox holds a few malformed numbers - a missing country code, a stray
+// direction mark pasted in from somewhere. Sending to those fails noisily and
+// achieves nothing, so they are skipped in silence.
+function usablePhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.length < 9 || digits.length > 15) return null;
+  if (digits.startsWith("972")) return digits;
+  if (digits.startsWith("0")) return "972" + digits.slice(1);
+  // An Israeli mobile typed without its leading zero: exactly nine digits
+  // beginning with 5. Recovered rather than dropped, because it is a real
+  // customer with a perfectly good number and one missing character.
+  if (digits.length === 9 && digits.startsWith("5")) return "972" + digits;
+  // Anything else is genuinely ambiguous - a digit too many, a stray character
+  // pasted in from a spreadsheet - and guessing at a phone number is how a
+  // message reaches a stranger. Skipped.
+  return null;
+}
+
 async function checkAbsences() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
 
   const state = store.getArboxState();
-  // Keyed by user+stage, so someone who keeps staying away hears from us once
-  // per stage rather than once ever.
+  // Keyed by user and stage, so someone who keeps staying away hears from us
+  // once per stage rather than once ever.
   const notifiedKeys = new Set(state.notifiedAbsenceKeys || []);
 
-  const to = new Date().toISOString().slice(0, 10);
-  const from = new Date();
-  from.setDate(from.getDate() - 30); // Arbox reports cap the range at 31 days
-  const fromStr = from.toISOString().slice(0, 10);
+  const { lastSeen, people, booked } = await attendancePicture();
+  const today = new Date(new Date().toISOString().slice(0, 10));
 
-  const result = await arbox.getReport("absenceReport", {
-    fromDate: fromStr,
-    toDate: to,
-    limit: 200,
-    group_by: "user",
-  });
-  const people = result.data || [];
-  const now = new Date();
-  let changed = false;
-
-  for (const person of people) {
-    if (person.future_registration !== "no" || person.allow_sms === "no" || !person.phone) continue;
-
-    if (!isAfterGoLive(person.last_seen)) continue; // stopped coming before we went live
-    const lastSeen = new Date(person.last_seen);
-    const daysAgo = Math.floor((now - lastSeen) / (1000 * 60 * 60 * 24));
+  // Everyone currently mid-absence, and which stage they are in.
+  const due = [];
+  for (const [id, date] of lastSeen) {
+    const daysAgo = Math.round((today - new Date(date)) / 86400000);
     const stage = absenceStage(daysAgo);
-    if (stage === null) continue; // hasn't been away long enough yet
+    if (stage === null) continue;
+    if (booked.has(id)) continue;
+    const person = people.get(id) || {};
+    const phone = usablePhone(person.phone);
+    if (!phone) continue;
+    due.push({ id, stage, daysAgo, phone, name: (person.name || "").split(" ")[0] });
+  }
 
-    const key = `${person.id}:${stage}`;
+  // Starting from today, by Nadav's decision. Forty-two people are mid-absence
+  // right now because this has never worked; switching it on without this would
+  // write to all of them at once, which is precisely the failure that has
+  // already happened twice. They are recorded as handled, in silence, and the
+  // automation carries on normally for anyone who crosses a threshold from here.
+  const firstRun = !state.absenceAttendanceStarted;
+  if (firstRun) {
+    for (const d of due) {
+      // Every stage up to and including their current one, so a person eight
+      // days absent today does not receive the fourteen-day message next week
+      // for an absence that began before we were watching.
+      for (let s = 0; s <= d.stage; s++) notifiedKeys.add(`${d.id}:${s}`);
+    }
+    store.setArboxState({
+      ...state,
+      notifiedAbsenceKeys: Array.from(notifiedKeys),
+      absenceAttendanceStarted: new Date().toISOString(),
+    });
+    console.log(`Absences: starting from now - ${due.length} people already mid-absence recorded in silence.`);
+    return;
+  }
+
+  let changed = false;
+  for (const d of due) {
+    const key = `${d.id}:${d.stage}`;
     if (notifiedKeys.has(key)) continue;
 
-    const variants = ABSENCE_STAGES[stage].templates;
+    const variants = ABSENCE_STAGES[d.stage].templates;
     const template = variants[Math.floor(Math.random() * variants.length)];
     // Only the last stage names how many days it has been.
     const params =
-      template === "absence_reminder_3" ? [person.first_name, String(daysAgo)] : [person.first_name];
-    const r = await queueMessage(person.phone.replace("+", ""), template, params);
+      template === "absence_reminder_3" ? [d.name, String(d.daysAgo)] : [d.name];
+
+    const r = await queueMessage(d.phone, template, params);
     if (r === null) continue; // blocked by a guard - do not retire the reminder
-    await sleep(PACE_MS);
     notifiedKeys.add(key);
     changed = true;
   }
