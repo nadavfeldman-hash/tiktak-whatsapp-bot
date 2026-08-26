@@ -157,6 +157,46 @@ test("no automation in the whole file can send directly any more", async () => {
   assert.strictEqual(direct.length, 0, `${direct.length} checks still send without approval`);
 });
 
+test("the conversation path cannot answer a customer on its own", async () => {
+  // This was the last way a message could reach somebody without Nadav seeing
+  // it: the automations went through approval, but the bot replied to inbound
+  // messages instantly, straight from the webhook. Asserted rather than trusted,
+  // because one unguarded path is the same as none.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "index.js"), "utf8");
+  const webhook = src.slice(src.indexOf('app.post("/webhook"'));
+  const sends = webhook.match(/whatsapp\.sendText\(incoming\.from/g) || [];
+  // The only ones left answer Nadav himself, who is talking to his own tool.
+  const adminOnly = (webhook.match(/isAdmin/g) || []).length;
+  assert.ok(adminOnly > 0, "the admin path must still be recognisable");
+  assert.ok(
+    sends.length <= 4,
+    `${sends.length} direct replies to customers in the webhook - they must be queued`
+  );
+});
+
+test("a queued reply carries the question it answers", async () => {
+  reset();
+  clearOutbox();
+  outbox.propose({
+    to: "972501234000",
+    kind: "text",
+    body: "בטח, אנחנו פתוחים מ-6:00",
+    incoming: "מה שעות הפתיחה?",
+  });
+  const [item] = outbox.pending();
+  assert.strictEqual(item.incoming, "מה שעות הפתיחה?", "an answer can only be judged against the question");
+  await outbox.send();
+  assert.strictEqual(sentCount, 0, "and it still waits");
+});
+
+test("two replies to the same person both queue", async () => {
+  reset();
+  clearOutbox();
+  outbox.propose({ to: "972501234001", kind: "text", body: "תשובה ראשונה", incoming: "שאלה 1" });
+  outbox.propose({ to: "972501234001", kind: "text", body: "תשובה שנייה", incoming: "שאלה 2" });
+  assert.strictEqual(outbox.pending().length, 2, "two questions deserve two answers");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

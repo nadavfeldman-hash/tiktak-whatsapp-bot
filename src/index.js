@@ -26,6 +26,23 @@ app.use("/admin", adminPanel);
 // variables set in the Render dashboard cannot be read from anywhere else, so
 // without this every "did the toggle take effect?" question turns into guesswork
 // and screenshots. Booleans and one date only - no secrets.
+
+// Every word that reaches a customer from the conversation path goes through
+// here, and here it is queued rather than sent. Nadav approves it in the panel.
+// Kept as one function so there is a single place to look when asking "can
+// anything get out without him" - the answer has to be checkable, not remembered.
+function queueReply(to, body, incomingText) {
+  require("./outbox").propose({
+    to,
+    kind: "text",
+    body,
+    automation: "תשובה בשיחה",
+    personName: to,
+    incoming: incomingText || "",
+  });
+  console.log(`Reply to ${to} queued for approval, not sent.`);
+}
+
 app.get("/status", (req, res) => {
   const override = process.env.ENABLE_CUSTOMER_AUTOMATIONS;
   res.json({
@@ -115,16 +132,25 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    await whatsapp.markAsRead(incoming.id);
+    // Marking the message read is a blue tick and nothing more. It used to sit
+    // unguarded at the top of this block, so a hiccup on that one call threw the
+    // whole thing into the catch below and the customer got "sorry, technical
+    // problem" instead of an answer - a cosmetic call breaking the only part
+    // that matters.
+    try {
+      await whatsapp.markAsRead(incoming.id);
+    } catch (e) {
+      console.log("Could not mark as read (harmless):", e.message);
+    }
 
     if (incoming.unsupported) {
-      await whatsapp.sendText(incoming.from, "כרגע אני תומך רק בהודעות טקסט. אפשר לכתוב לי מה תרצה?");
+      queueReply(incoming.from, "כרגע אני תומך רק בהודעות טקסט. אפשר לכתוב לי מה תרצה?", "(הודעה שאינה טקסט)");
       return;
     }
 
     if (RESET_COMMANDS.includes(incoming.text.trim())) {
       store.resetConversation(incoming.from);
-      await whatsapp.sendText(incoming.from, "השיחה אופסה, מתחילים מאפס 🙏");
+      queueReply(incoming.from, "השיחה אופסה, מתחילים מאפס 🙏", incoming.text);
       return;
     }
 
@@ -152,17 +178,43 @@ app.post("/webhook", async (req, res) => {
     }
 
     const reply = await ai.handleIncomingMessage(incoming.from, incoming.text, isAdmin);
-    await whatsapp.sendText(incoming.from, reply);
+
+    // Nadav writing to his own bot gets answered directly - he is talking to a
+    // tool, not being marketed at, and asking him to approve his own answers
+    // would be absurd.
+    if (isAdmin) {
+      await whatsapp.sendText(incoming.from, reply);
+      return;
+    }
+
+    // Everyone else's answer goes into the same queue as everything else.
+    //
+    // This was the one way a message could still reach a customer without Nadav
+    // seeing it first: the automations were routed through approval, but the
+    // conversational bot answered on its own, immediately, straight from the
+    // webhook. One unguarded path is the same as none, so it goes through the
+    // queue with the customer's own question attached - an answer can only be
+    // judged against what was asked.
+    //
+    // Once the answers have proved themselves this can be relaxed. Until then
+    // the rule is the rule, with no exception anywhere in the code.
+    require("./outbox").propose({
+      to: incoming.from,
+      kind: "text",
+      body: reply,
+      automation: "תשובה בשיחה",
+      personName: incoming.from,
+      incoming: incoming.text,
+    });
+    console.log(`Reply to ${incoming.from} queued for approval, not sent.`);
   } catch (err) {
     console.error("Error handling webhook event:", err);
     // Never leave the customer hanging with silence - always send something back,
     // even when the AI call itself failed (network glitch, rate limit, etc).
     if (incoming?.from) {
-      try {
-        await whatsapp.sendText(incoming.from, "רגע קטן של תקלה טכנית מהצד שלי, סליחה 🙏 תוכל לכתוב שוב את מה שרצית?");
-      } catch (sendErr) {
-        console.error("Also failed to send the fallback error message:", sendErr);
-      }
+      // Queued rather than sent, like every other word that reaches a customer.
+      // Silence while Nadav looks is better than a message he never agreed to.
+      queueReply(incoming.from, "רגע קטן של תקלה טכנית מהצד שלי, סליחה 🙏 תוכל לכתוב שוב את מה שרצית?", incoming.text || "");
     }
   }
 });

@@ -56,6 +56,11 @@ function isExpired(item) {
 // One person, one automation, one pending proposal. Without this a check that
 // runs every two minutes queues the same person thirty times an hour.
 function alreadyPending(items, p) {
+  // A reply is an answer to one particular thing somebody asked, so two of them
+  // to the same person are two different messages and both belong in the queue.
+  // Automated messages are the opposite: a check running every two minutes would
+  // otherwise queue the same person thirty times an hour.
+  if (p.kind === "text") return false;
   return items.some(
     (i) => i.status === "pending" && i.to === p.to && i.template === p.template
   );
@@ -71,21 +76,32 @@ function propose(p) {
   // that has already gone out sits in the queue looking like work to do, gets
   // approved, and is then silently dropped - so the panel and reality disagree,
   // which is how nobody noticed people being messaged repeatedly the first time.
-  const blocked = require("./whatsapp").wouldSkip(p.to, p.template, { deliberate: true });
-  if (blocked) return null;
+  // The no-repeats rules are about templates the business initiates; they have
+  // nothing to say about answering a person who has just written in.
+  if (p.kind !== "text") {
+    const blocked = require("./whatsapp").wouldSkip(p.to, p.template, { deliberate: true });
+    if (blocked) return null;
+  }
 
   const item = {
     id: data.nextId++,
     status: "pending",
     proposedAt: new Date().toISOString(),
     to: p.to,
+    // "template" is a pre-approved message the business starts; "text" is a
+    // reply to somebody who has just written in, which WhatsApp allows as free
+    // text for 24 hours. Both wait for approval; only how they are sent differs.
+    kind: p.kind === "text" ? "text" : "template",
     template: p.template,
     params: p.params || [],
+    body: p.body || "",
     // Everything below is for the human reading the queue, not for the machine.
     automation: p.automation || "לא ידוע",
     personName: p.personName || "",
     reason: p.reason || "",
-    preview: p.preview || "",
+    preview: p.preview || p.body || "",
+    // What the customer actually asked, so the answer can be judged against it.
+    incoming: p.incoming || "",
   };
   data.items.push(item);
   write(data);
@@ -178,7 +194,10 @@ async function send() {
     const messages = item.batch || [item];
     for (const m of messages) {
       try {
-        const res = await whatsapp.sendTemplate(m.to, m.template, m.params, { deliberate: true });
+        const res =
+          m.kind === "text"
+            ? await whatsapp.sendText(m.to, m.body)
+            : await whatsapp.sendTemplate(m.to, m.template, m.params, { deliberate: true });
         if (res) sent++;
         await new Promise((r) => setTimeout(r, 1200));
       } catch (e) {

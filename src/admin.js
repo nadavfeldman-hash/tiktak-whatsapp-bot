@@ -337,6 +337,17 @@ router.post("/reset-conversation", express.urlencoded({ extended: false }), requ
   res.redirect("/admin/dashboard#conversations");
 });
 
+// A broadcast is the one thing here that deliberately writes to everybody, so
+// it asks twice: the first press works out exactly who would receive it and
+// shows that number and the words back, and only the second press sends.
+//
+// It also carries an explicit exemption from the fuse. The fuse exists to stop
+// volume nobody intended, and a broadcast is the opposite - volume stated on
+// screen and confirmed by hand. Without the exemption it would cut off after
+// eight of a hundred and ninety-one and lock the system, which is a worse
+// failure than the one it is guarding against.
+const pendingBroadcasts = new Map();
+
 router.post("/broadcast", express.urlencoded({ extended: false }), requireAuth, async (req, res) => {
   const text = (req.body.text || "").trim();
   if (!text) return res.redirect("/admin/dashboard?broadcast=empty#broadcast");
@@ -347,24 +358,61 @@ router.post("/broadcast", express.urlencoded({ extended: false }), requireAuth, 
   } catch (e) {
     return res.redirect("/admin/dashboard?broadcast=error#broadcast");
   }
+  // People who asked not to be messaged are left out, and counted separately so
+  // the number on screen is not quietly smaller than expected.
   const recipients = members.filter((m) => m.phone && m.allow_sms !== "no");
+  const optedOut = members.length - recipients.length;
 
-  // Respond immediately - sending to potentially hundreds of people, paced to
-  // avoid WhatsApp throttling, would otherwise time out the HTTP request.
-  res.redirect(`/admin/dashboard?broadcast=started&count=${recipients.length}#broadcast`);
+  const token = String(Date.now());
+  pendingBroadcasts.set(token, { text, recipients, at: Date.now() });
+  for (const [k, v] of pendingBroadcasts) if (Date.now() - v.at > 600000) pendingBroadcasts.delete(k);
+
+  res.send(`<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>אישור שידור</title>
+    <style>body{font-family:system-ui,-apple-system,Segoe UI,Arial;background:#f4f4f5;margin:0;padding:24px;}
+    .box{max-width:560px;margin:0 auto;background:#fff;border-radius:14px;padding:24px;}
+    h1{font-size:20px;margin:0 0 16px;} .n{font-size:44px;font-weight:700;color:#c0392b;}
+    pre{white-space:pre-wrap;background:#f6f6f6;padding:14px;border-radius:10px;font-family:inherit;font-size:15px;line-height:1.6;}
+    button{font-size:16px;padding:12px 20px;border-radius:10px;border:0;cursor:pointer;}
+    .go{background:#c0392b;color:#fff;} .no{background:#e6e6e6;margin-inline-start:8px;}
+    .muted{color:#777;font-size:14px;}</style></head><body><div class="box">
+    <h1>רגע לפני ששולחים</h1>
+    <div>ההודעה הזו תישלח ל־</div>
+    <div class="n">${recipients.length}</div>
+    <div>מתאמנים פעילים.${optedOut ? ` <span class="muted">(${optedOut} ביקשו לא לקבל הודעות ולא ייכללו)</span>` : ""}</div>
+    <p class="muted">זו הודעה לכולם בבת אחת. אין דרך לבטל אחרי שנשלחה.</p>
+    <div>זה מה שהם יקראו:</div>
+    <pre>${esc(text)}</pre>
+    <form method="POST" action="/admin/broadcast/confirm">
+      <input type="hidden" name="token" value="${token}">
+      <button class="go" type="submit">כן, שלח ל-${recipients.length} אנשים</button>
+      <a href="/admin/dashboard#broadcast"><button class="no" type="button">ביטול</button></a>
+    </form></div></body></html>`);
+});
+
+router.post("/broadcast/confirm", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  const job = pendingBroadcasts.get(req.body.token);
+  if (!job) return res.redirect("/admin/dashboard?broadcast=expired#broadcast");
+  pendingBroadcasts.delete(req.body.token);
+
+  res.redirect(`/admin/dashboard?broadcast=started&count=${job.recipients.length}#broadcast`);
 
   (async () => {
     let sent = 0;
-    for (const member of recipients) {
+    for (const member of job.recipients) {
       try {
-        await whatsapp.sendTemplate(member.phone.replace("+", ""), "general_announcement", [text]);
+        await whatsapp.sendTemplate(member.phone.replace("+", ""), "general_announcement", [job.text], {
+          deliberate: true,
+          bulkApprovedByAdmin: true,
+        });
         sent++;
       } catch (e) {
         console.error("Broadcast failed for", member.phone, e.message);
       }
       await sleep(3000);
     }
-    console.log(`Broadcast finished: ${sent}/${recipients.length} sent.`);
+    console.log(`Broadcast finished: ${sent}/${job.recipients.length} sent.`);
   })();
 });
 
@@ -659,7 +707,11 @@ router.get("/dashboard", requireAuth, async (req, res) => {
                     <div style="flex:1;min-width:0;">
                       <div style="font-weight:600;">${esc(i.personName || "")} <span style="font-weight:400;color:#888;">· ${esc(i.automation)}</span></div>
                       <div style="color:#888;font-size:13px;">${esc(i.to)}</div>
-                      <div style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:10px;margin-top:8px;font-size:14px;line-height:1.5;">${esc(i.preview || i.template)}</div>
+                      ${i.incoming
+                        ? `<div style="white-space:pre-wrap;background:#eef4ff;border-inline-start:3px solid #7aa7ff;border-radius:8px;padding:10px;margin-top:8px;font-size:14px;line-height:1.5;"><span style="color:#5577bb;font-size:12px;font-weight:600;">הוא כתב:</span><br>${esc(i.incoming)}</div>
+                           <div style="color:#888;font-size:12px;font-weight:600;margin-top:8px;">התשובה שהבוט מציע:</div>`
+                        : ""}
+                      <div style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:10px;margin-top:${i.incoming ? "4" : "8"}px;font-size:14px;line-height:1.5;">${esc(i.preview || i.template)}</div>
                     </div>
                   </div>
                 </label>`

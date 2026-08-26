@@ -121,7 +121,12 @@ async function sendTemplate(to, templateName, params = [], options = {}) {
   // everything else already approved. It knows nothing about why any particular
   // message qualified - only how many are leaving - which is what makes it hold
   // when a check is wrong in a way nobody predicted.
-  const blocked = fuse.blockReason();
+  // A broadcast is exempt, and only a broadcast. The fuse exists to stop volume
+  // nobody intended; a broadcast is volume stated on screen, counted, and
+  // confirmed by hand a second time. Left fused it would stop after eight of a
+  // hundred and ninety-one and lock everything - a worse outcome than the one it
+  // guards against, and one that would teach everybody to distrust the fuse.
+  const blocked = options.bulkApprovedByAdmin ? null : fuse.blockReason();
   if (blocked) {
     console.error(`Blocked ${templateName} to ${to}: ${blocked}`);
     return null;
