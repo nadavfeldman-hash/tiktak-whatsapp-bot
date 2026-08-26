@@ -289,6 +289,27 @@ router.post("/toggle-automations", express.urlencoded({ extended: false }), requ
   res.redirect("/admin/dashboard#automations");
 });
 
+// The approval queue. Every one of these routes only ever moves an item between
+// states; the sending itself happens on the monitor's own timer, so a slow
+// WhatsApp call can never leave the panel hanging or an item in a state where
+// nobody can tell whether it went out.
+router.post("/outbox/approve", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  const ids = [].concat(req.body.id || []);
+  const n = require("./outbox").approve(ids);
+  res.redirect(`/admin/dashboard?approved=${n}#outbox`);
+});
+
+router.post("/outbox/reject", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  const ids = [].concat(req.body.id || []);
+  const n = require("./outbox").reject(ids);
+  res.redirect(`/admin/dashboard?rejected=${n}#outbox`);
+});
+
+router.post("/outbox/reject-all", requireAuth, (req, res) => {
+  const n = require("./outbox").rejectAllPending();
+  res.redirect(`/admin/dashboard?rejected=${n}#outbox`);
+});
+
 // Arming the fuse again is deliberately a person's decision and nothing else's.
 // No timer clears it and no deploy clears it - if it cut the power, something
 // was wrong, and it stays off until somebody has looked at why.
@@ -459,6 +480,7 @@ router.get("/dashboard", requireAuth, async (req, res) => {
   const automationsOn = !!settings.customerAutomationsEnabled;
   const shadowOn = require("./whatsapp").shadowMode();
   const fuseInfo = require("./fuse").status();
+  const pendingItems = require("./outbox").pending();
 
   // The two questions that actually matter - can the bot answer people, and can
   // it start conversations - answered from the real state of every switch
@@ -611,6 +633,43 @@ router.get("/dashboard", requireAuth, async (req, res) => {
                 <div style="margin-top:10px;"><button class="btn-primary" type="submit">שמור עדכון חדש</button></div>
               </form>
             </div>
+          </div>
+        </div>
+
+        <div class="section" id="outbox">
+          <div class="section-header">
+            <div class="section-title">✋ ממתין לאישור שלך${pendingItems.length ? ` (${pendingItems.length})` : ""}</div>
+          </div>
+          <div class="card card-pad">
+            <div class="toggle-desc" style="max-width:none;">
+              האוטומציות לא שולחות כלום בעצמן. הן רק מציעות, וזה מה שהן מציעות עכשיו.
+              <strong>שום הודעה לא יוצאת עד שתסמן ותאשר כאן.</strong>
+              הצעה שלא אושרה תוך ${require("./outbox").EXPIRY_HOURS} שעות נמחקת מעצמה.
+            </div>
+            ${pendingItems.length === 0
+              ? `<div style="margin-top:14px;color:#7a7a7a;">אין כרגע שום הודעה שממתינה. ✓</div>`
+              : `
+            <form method="POST" action="/admin/outbox/approve" style="margin-top:14px;">
+              ${pendingItems
+                .map(
+                  (i) => `
+                <label style="display:block;border:1px solid #e3e3e3;border-radius:10px;padding:12px;margin-bottom:10px;cursor:pointer;">
+                  <div style="display:flex;gap:10px;align-items:flex-start;">
+                    <input type="checkbox" name="id" value="${i.id}" style="margin-top:4px;width:18px;height:18px;flex:none;">
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-weight:600;">${esc(i.personName || "")} <span style="font-weight:400;color:#888;">· ${esc(i.automation)}</span></div>
+                      <div style="color:#888;font-size:13px;">${esc(i.to)}</div>
+                      <div style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:10px;margin-top:8px;font-size:14px;line-height:1.5;">${esc(i.preview || i.template)}</div>
+                    </div>
+                  </div>
+                </label>`
+                )
+                .join("")}
+              <button class="btn-primary" type="submit">אשר ושלח את המסומנים</button>
+            </form>
+            <form method="POST" action="/admin/outbox/reject-all" style="margin-top:10px;" onsubmit="return confirm('למחוק את כל ההצעות שממתינות? לא יישלח כלום.')">
+              <button class="btn-danger" type="submit">מחק הכל, אל תשלח כלום</button>
+            </form>`}
           </div>
         </div>
 

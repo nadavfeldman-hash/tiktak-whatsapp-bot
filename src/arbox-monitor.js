@@ -2,7 +2,60 @@ const arbox = require("./arbox");
 const whatsapp = require("./whatsapp");
 const store = require("./store");
 
+const outbox = require("./outbox");
+const TEMPLATES = require("../templates.json");
+
 const ADMIN_PHONE = process.env.ADMIN_PHONE;
+
+// Every customer-facing message in this file goes through here, and here it is
+// not sent - it is proposed. Nadav approves it in the panel, and only then does
+// it reach a phone.
+//
+// It deliberately keeps the exact signature of the old sendTemplate, so none of
+// the seventeen checks had to be rewritten to gain this. Their decision logic is
+// untouched; what that logic produces is now a suggestion instead of an action.
+//
+// Returns the queued proposal, or null when there is nothing to queue (one is
+// already waiting, or it has already been sent). Callers that read null as "not
+// handled, look again next time" keep behaving exactly as before.
+function queueMessage(to, template, params = [], options = {}) {
+  return outbox.propose({
+    to,
+    template,
+    params,
+    automation: TEMPLATE_LABELS[template] || template,
+    personName: params[0] || "",
+    reason: options.reason || "",
+    preview: renderTemplate(template, params),
+  });
+}
+
+// What the person will actually read, blanks filled in - so approving is a
+// decision about real words rather than about a template name.
+function renderTemplate(name, params) {
+  const bare = name.replace(/_v2$/, "");
+  const t = TEMPLATES.find((x) => x.name === name || x.name === bare);
+  if (!t) return "";
+  return String(t.body).replace(/\{\{(\d+)\}\}/g, (m, n) => params[Number(n) - 1] ?? m);
+}
+
+// Plain Hebrew for the queue, so the panel says why somebody is about to be
+// written to rather than naming a template.
+const TEMPLATE_LABELS = {
+  new_lead_details_request_v2: "ליד חדש",
+  lead_no_response_1_v2: "ליד שלא ענה",
+  lead_no_response_2: "ליד שלא ענה",
+  lead_no_response_3_v2: "ליד שלא ענה",
+  welcome_new_member_v2: "מצטרף חדש",
+  lost_lead_goodbye_v2: "ליד אבוד",
+  failed_payment_reminder: "תשלום שנכשל",
+  streak_milestone_v2: "רצף אימונים",
+  new_member_checkin_v2: "צ'ק-אין מצטרף חדש",
+  late_cancellation_callout: "ביטול מאוחר",
+  coach_trial_notice_morning: "עדכון למאמן",
+  coach_replacement_notice: "החלפת מאמן",
+};
+
 
 // Small pause between messages in any loop that could message many different
 // recipients in one run (e.g. the first-ever attendance-trend sweep can hit
@@ -106,7 +159,7 @@ async function checkNewLeads() {
     // just been written to by hand.
     if (customerAutomationsEnabled() && lead.phone && isAfterGoLive(lead.created_time)) {
       try {
-        await whatsapp.sendTemplate(lead.phone.replace("+", ""), "new_lead_details_request_v2", [
+        await queueMessage(lead.phone.replace("+", ""), "new_lead_details_request_v2", [
           lead.first_name || "",
         ]);
         await sleep(PACE_MS);
@@ -250,7 +303,7 @@ async function checkBirthdays() {
 
   for (const person of people) {
     const template = BIRTHDAY_TEMPLATES[Math.floor(Math.random() * BIRTHDAY_TEMPLATES.length)];
-    await whatsapp.sendTemplate(person.phone.replace("+", ""), template, [person.first_name]);
+    await queueMessage(person.phone.replace("+", ""), template, [person.first_name]);
     await sleep(PACE_MS);
   }
 
@@ -285,7 +338,7 @@ async function checkFailedPayments() {
       const user = await arbox.getUser(t.user_id);
       const phone = user.data?.phone;
       if (phone) {
-        await whatsapp.sendTemplate(phone.replace("+", ""), "failed_payment_reminder", [t.first_name]);
+        await queueMessage(phone.replace("+", ""), "failed_payment_reminder", [t.first_name]);
         await sleep(PACE_MS);
       }
     } catch (e) {
@@ -324,7 +377,7 @@ async function checkNewMembers() {
     if (welcomed.has(String(c.user_id))) continue;
     if (!isFirstRun && c.phone) {
       // Converting a lead to a member is likewise Nadav's own doing.
-      await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name], {
+      await queueMessage(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name], {
         deliberate: true,
       });
       await sleep(PACE_MS);
@@ -361,7 +414,7 @@ async function checkLostLeads() {
       // Marking a lead lost is Nadav closing that file himself, the same kind of
       // deliberate act as moving a status - so it is not held back by the
       // blanket protection, only by the no-repeats rule.
-      await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name], {
+      await queueMessage(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name], {
         deliberate: true,
       });
       await sleep(PACE_MS);
@@ -418,7 +471,7 @@ async function checkTrialReminders() {
       // the Waze address); on the day itself it's just a short nudge.
       const template =
         tag === "day_before" ? "trial_reminder_day_before_v2" : "trial_reminder_same_day_v2";
-      await whatsapp.sendTemplate(reg.phone.replace("+", ""), template, [
+      await queueMessage(reg.phone.replace("+", ""), template, [
         reg.full_name || "",
         session.session_name || "אימון",
         session.start_time || "",
@@ -508,7 +561,7 @@ async function checkAbsences() {
     // Only the last stage names how many days it has been.
     const params =
       template === "absence_reminder_3" ? [person.first_name, String(daysAgo)] : [person.first_name];
-    const r = await whatsapp.sendTemplate(person.phone.replace("+", ""), template, params);
+    const r = await queueMessage(person.phone.replace("+", ""), template, params);
     if (r === null) continue; // blocked by a guard - do not retire the reminder
     await sleep(PACE_MS);
     notifiedKeys.add(key);
@@ -571,7 +624,7 @@ async function checkLeadNoResponse() {
     // Nadav moved this lead's status himself, so it is a deliberate act rather
     // than an automation's own inference - it is not held back by the blanket
     // protection or the daily cooldown, only by the no-repeats rule.
-    const result = await whatsapp.sendTemplate(
+    const result = await queueMessage(
       lead.phone.replace("+", ""),
       template,
       [lead.first_name || ""],
@@ -696,7 +749,7 @@ async function checkAttendanceTrends() {
       template === "attendance_trend_steady"
         ? [info.name || "", String(currentCount)]
         : [info.name || "", String(previousCount), String(currentCount)];
-    await whatsapp.sendTemplate(info.phone.replace("+", ""), template, params);
+    await queueMessage(info.phone.replace("+", ""), template, params);
     await sleep(PACE_MS);
   }
 
@@ -721,7 +774,7 @@ async function checkCoachTrialNotices() {
   for (const { session, reg } of registrations) {
     const coachPhone = session.staff_member?.phone;
     if (!coachPhone) continue;
-    await whatsapp.sendTemplate(coachPhone.replace("+", ""), "coach_trial_notice_morning", [
+    await queueMessage(coachPhone.replace("+", ""), "coach_trial_notice_morning", [
       session.staff_member.name || "",
       session.session_name || "אימון",
       session.start_time || "",
@@ -776,7 +829,7 @@ async function checkCoachReplacements() {
         } catch {
           // fall back to the generic label above if the lookup fails
         }
-        await whatsapp.sendTemplate(newCoachPhone.replace("+", ""), "coach_replacement_notice", [
+        await queueMessage(newCoachPhone.replace("+", ""), "coach_replacement_notice", [
           session.staff_member.name || "",
           session.date || "",
           session.session_name || "",
@@ -849,7 +902,7 @@ async function checkLateCancellations() {
     // They rebooked that same day - nothing to say.
     if (registeredByDate.get(c.date).has(String(c.user_id))) continue;
 
-    const r = await whatsapp.sendTemplate(c.phone.replace("+", ""), "late_cancellation_callout", [
+    const r = await queueMessage(c.phone.replace("+", ""), "late_cancellation_callout", [
       c.first_name || "",
       c.class_name || "אימון",
       `${c.date || ""} ${(c.start_time || "").slice(0, 5)}`.trim(),
@@ -900,7 +953,7 @@ async function checkStreaks() {
     streaks[key] = { streak: newStreak, name: info.name, phone: info.phone };
 
     if (STREAK_MILESTONES.includes(newStreak)) {
-      await whatsapp.sendTemplate(info.phone.replace("+", ""), "streak_milestone_v2", [
+      await queueMessage(info.phone.replace("+", ""), "streak_milestone_v2", [
         info.name || "",
         String(newStreak),
       ]);
@@ -937,7 +990,7 @@ async function checkNewMemberCheckins() {
       const key = `${member.user_id}:${milestone}`;
       if (sentKeys.has(key)) continue;
 
-      await whatsapp.sendTemplate(member.phone.replace("+", ""), "new_member_checkin_v2", [
+      await queueMessage(member.phone.replace("+", ""), "new_member_checkin_v2", [
         member.first_name || "",
         String(Math.round(milestone / 7)),
       ]);
@@ -989,6 +1042,12 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkLateCancellations().catch((e) => console.error("Arbox monitor (late cancellations) error:", e.message));
     checkStreaks().catch((e) => console.error("Arbox monitor (streaks) error:", e.message));
     checkNewMemberCheckins().catch((e) => console.error("Arbox monitor (new member checkins) error:", e.message));
+
+    // Nothing above this line sends anything any more - they all propose. This
+    // is the only place a customer is written to, and it sends strictly what
+    // Nadav has approved in the panel and nothing else.
+    outbox.sweep();
+    outbox.send().catch((e) => console.error("Outbox send error:", e.message));
   };
   runAll();
   setInterval(runAll, intervalMs);

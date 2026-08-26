@@ -49,6 +49,8 @@ app.get("/status", (req, res) => {
     // The fuse underneath everything: how many messages have actually left in
     // the last hour and day, and whether it has cut the power.
     fuse: require("./fuse").status(),
+    // How many messages are waiting for Nadav. Nothing here has been sent.
+    awaitingApproval: require("./outbox").counts(),
     shadowMode: require("./whatsapp").shadowMode(),
     // What the monitor currently believes each lead's status is. Without seeing
     // this there is no way to tell a "nothing changed" from a bug.

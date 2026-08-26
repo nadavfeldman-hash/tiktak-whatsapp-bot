@@ -141,6 +141,95 @@ test("state is written somewhere that survives a deploy", async () => {
   assert.ok(fs.existsSync(dir), "and that place must exist");
 });
 
+// --- the approval rule ------------------------------------------------------
+
+const outbox = require("../src/outbox");
+
+function clearOutbox() {
+  fs.writeFileSync(path.join(tmp, "outbox.json"), JSON.stringify({ items: [], nextId: 1 }));
+}
+
+test("no automation in the whole file can send directly any more", async () => {
+  // The rule is enforced here rather than trusted, because it is the one that
+  // matters: every path from a check to a customer must go through approval.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const direct = src.match(/whatsapp\.sendTemplate\(/g) || [];
+  assert.strictEqual(direct.length, 0, `${direct.length} checks still send without approval`);
+});
+
+test("a proposal waits and sends nothing", async () => {
+  reset();
+  clearOutbox();
+  outbox.propose({ to: "972501111111", template: "welcome_new_member_v2", params: ["דנה"] });
+  await outbox.send();
+  assert.strictEqual(sentCount, 0, "an unapproved proposal must never reach anyone");
+  assert.strictEqual(outbox.pending().length, 1, "and it must still be waiting");
+});
+
+test("approving is what sends, and only what was approved", async () => {
+  reset();
+  clearOutbox();
+  const a = outbox.propose({ to: "972502222222", template: "welcome_new_member_v2", params: ["א"] });
+  outbox.propose({ to: "972503333333", template: "welcome_new_member_v2", params: ["ב"] });
+  outbox.approve([a.id]);
+  await outbox.send();
+  assert.strictEqual(sentCount, 1, "exactly the approved one");
+  assert.strictEqual(outbox.pending().length, 1, "the other is still waiting, untouched");
+});
+
+test("a rejected proposal is gone for good", async () => {
+  reset();
+  clearOutbox();
+  const a = outbox.propose({ to: "972504444444", template: "birthday_1_v2", params: ["ג"] });
+  outbox.reject([a.id]);
+  await outbox.send();
+  assert.strictEqual(sentCount, 0);
+  assert.strictEqual(outbox.pending().length, 0);
+});
+
+test("a check running every two minutes queues a person once, not thirty times", async () => {
+  reset();
+  clearOutbox();
+  for (let i = 0; i < 30; i++) {
+    outbox.propose({ to: "972505555555", template: "welcome_new_member_v2", params: ["ד"] });
+  }
+  assert.strictEqual(outbox.pending().length, 1);
+});
+
+test("nothing is queued that the sender would refuse anyway", async () => {
+  reset();
+  clearOutbox();
+  await whatsapp.sendTemplate("972506000000", "welcome_new_member_v2", ["ה"]);
+  const again = outbox.propose({ to: "972506000000", template: "welcome_new_member_v2", params: ["ה"] });
+  assert.strictEqual(again, null, "the panel must not show work that is not really there");
+});
+
+test("a stale proposal expires instead of being sent late", async () => {
+  reset();
+  clearOutbox();
+  const a = outbox.propose({ to: "972507000000", template: "birthday_1_v2", params: ["ו"] });
+  // Age it past the expiry window by hand.
+  const f = path.join(tmp, "outbox.json");
+  const data = JSON.parse(fs.readFileSync(f, "utf8"));
+  data.items.find((i) => i.id === a.id).proposedAt = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+  fs.writeFileSync(f, JSON.stringify(data));
+  assert.strictEqual(outbox.pending().length, 0, "a birthday greeting two days late is worse than none");
+  outbox.sweep();
+  await outbox.send();
+  assert.strictEqual(sentCount, 0);
+});
+
+test("even a huge queue sends nothing on its own", async () => {
+  reset();
+  clearOutbox();
+  // The exact shape of today's incident: 465 people suddenly looking new.
+  for (let i = 0; i < 465; i++) {
+    outbox.propose({ to: `9725${100000 + i}`, template: "lost_lead_goodbye_v2", params: ["x"] });
+  }
+  await outbox.send();
+  assert.strictEqual(sentCount, 0, "the worst case is now a long list on a screen, not 465 messages");
+});
+
 // ---------------------------------------------------------------------------
 
 (async () => {

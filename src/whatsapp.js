@@ -208,4 +208,14 @@ function extractIncomingText(body) {
   return { from: message.from, id: message.id, text: message.text.body };
 }
 
-module.exports = { sendText, sendTemplate, sendBurst, markAsRead, extractIncomingText, shadowMode };
+module.exports = {
+  sendText,
+  sendTemplate,
+  sendBurst,
+  markAsRead,
+  extractIncomingText,
+  shadowMode,
+  // So the approval queue can decline to list something that would be refused
+  // at send time, and the panel never shows work that is not really there.
+  wouldSkip: skipReason,
+};
