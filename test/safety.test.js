@@ -229,6 +229,23 @@ test("every automation has a switch that can reach it", async () => {
   }
 });
 
+test("nothing is queued twice in the gap between approving and sending", async () => {
+  // Approving takes an item out of "pending" but it is not sent until the next
+  // cycle, and in that gap the checks were free to queue the same message again
+  // - it was no longer pending, and not yet in the send log. A second copy for
+  // the same person showed up in the panel within a minute of approving the
+  // first. Sending was still blocked by the seven-day rule, but that is the last
+  // line of defence and this should never reach it.
+  reset();
+  clearOutbox();
+  const first = outbox.propose({ to: "972522923417", template: "lead_no_response_3_v2", params: ["חגית"] });
+  outbox.approve([first.id]);
+  const second = outbox.propose({ to: "972522923417", template: "lead_no_response_3_v2", params: ["חגית"] });
+  assert.strictEqual(second, null, "an approved-but-unsent message must still block a duplicate");
+  await outbox.send();
+  assert.strictEqual(sentCount, 1, "and exactly one may leave");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

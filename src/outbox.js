@@ -61,9 +61,14 @@ function alreadyPending(items, p) {
   // Automated messages are the opposite: a check running every two minutes would
   // otherwise queue the same person thirty times an hour.
   if (p.kind === "text") return false;
-  return items.some(
-    (i) => i.status === "pending" && i.to === p.to && i.template === p.template
-  );
+  // "Not finished with" rather than "still pending". Approving an item takes it
+  // out of pending, but it is not sent until the next cycle - and in that gap
+  // the checks were free to queue the very same message again, because it was
+  // no longer pending and not yet in the send log. A duplicate for the same
+  // person appeared in the panel within a minute of approving the first, which
+  // is the one thing that must never happen.
+  const OPEN = ["pending", "held", "approved"];
+  return items.some((i) => OPEN.includes(i.status) && i.to === p.to && i.template === p.template);
 }
 
 // Called by the checks in place of sending. Returns the queued item, or null if
