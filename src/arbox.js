@@ -61,6 +61,30 @@ function getLostLeads(params = {}) {
   return arboxRequest(`/v3/leads/lost${query ? `?${query}` : ""}`);
 }
 
+// Both of these lists are returned oldest-first, and the endpoints ignore every
+// sort parameter we tried - so asking for the first 50 gets the 50 oldest, and
+// somebody marked lost or converted today sits on the last page, invisible.
+// That is why marking a lead lost appeared to do nothing. Walk every page.
+async function fetchAllPages(fetchPage) {
+  let all = [];
+  let page = 1;
+  while (page <= 20) {
+    const result = await fetchPage({ limit: 200, page });
+    all = all.concat(result.data || []);
+    if (!result.extra?.pagination?.next_page_url) break;
+    page++;
+  }
+  return all;
+}
+
+function getAllConvertedLeads() {
+  return fetchAllPages(getConvertedLeads);
+}
+
+function getAllLostLeads() {
+  return fetchAllPages(getLostLeads);
+}
+
 function getUser(userId) {
   return arboxRequest(`/v3/users/${userId}`);
 }
@@ -117,6 +141,8 @@ module.exports = {
   updateScheduleStaff,
   getConvertedLeads,
   getLostLeads,
+  getAllConvertedLeads,
+  getAllLostLeads,
   getUser,
   getAllActiveMembers,
 };

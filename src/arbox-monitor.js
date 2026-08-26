@@ -312,8 +312,7 @@ async function checkNewMembers() {
   const welcomed = new Set(state.welcomedUserIds || []);
   const isFirstRun = state.welcomedUserIds === undefined;
 
-  const result = await arbox.getConvertedLeads({ limit: 50 });
-  const converted = result.data || [];
+  const converted = await arbox.getAllConvertedLeads();
 
   for (const c of converted) {
     if (welcomed.has(String(c.user_id))) continue;
@@ -340,8 +339,7 @@ async function checkLostLeads() {
   const saidGoodbye = new Set(state.saidGoodbyeUserIds || []);
   const isFirstRun = state.saidGoodbyeUserIds === undefined;
 
-  const result = await arbox.getLostLeads({ limit: 50 });
-  const lost = result.data || [];
+  const lost = await arbox.getAllLostLeads();
 
   for (const c of lost) {
     if (saidGoodbye.has(String(c.user_id))) continue;
