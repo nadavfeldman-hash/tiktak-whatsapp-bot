@@ -32,6 +32,11 @@ app.use("/admin", adminPanel);
 // Kept as one function so there is a single place to look when asking "can
 // anything get out without him" - the answer has to be checkable, not remembered.
 function queueReply(to, body, incomingText) {
+  // Answering people in chat is a switch of its own, like every automation.
+  if (!arboxMonitor.automationOn("תשובה בשיחה")) {
+    console.log(`Chat replies are off - not queueing a reply to ${to}.`);
+    return;
+  }
   require("./outbox").propose({
     to,
     kind: "text",

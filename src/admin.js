@@ -283,6 +283,18 @@ router.post("/unprotect-status-leads", requireAuth, async (req, res) => {
   }
 });
 
+// One automation at a time, by name. The old single switch meant the only way
+// to try one was to turn on all seventeen, and turning on all seventeen is how
+// a quiet evening became forty-six messages.
+router.post("/toggle-automation", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  const name = req.body.name;
+  const enabled = store.getSettings().enabledAutomations || [];
+  const next = enabled.includes(name) ? enabled.filter((x) => x !== name) : enabled.concat(name);
+  store.setSetting("enabledAutomations", next);
+  console.log(`Automation "${name}" is now ${next.includes(name) ? "ON" : "OFF"}.`);
+  res.redirect("/admin/dashboard#automations");
+});
+
 router.post("/toggle-automations", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const settings = store.getSettings();
   store.setSetting("customerAutomationsEnabled", !settings.customerAutomationsEnabled);
@@ -529,6 +541,8 @@ router.get("/dashboard", requireAuth, async (req, res) => {
   const shadowOn = require("./whatsapp").shadowMode();
   const fuseInfo = require("./fuse").status();
   const pendingItems = require("./outbox").pending();
+  const monitor = require("./arbox-monitor");
+  const automationList = monitor.ALL_AUTOMATIONS.map((name) => ({ name, on: monitor.automationOn(name) }));
 
   // The two questions that actually matter - can the bot answer people, and can
   // it start conversations - answered from the real state of every switch
@@ -733,8 +747,29 @@ router.get("/dashboard", requireAuth, async (req, res) => {
               <div class="toggle-desc">כשזה פעיל, הבוט שולח הודעות אוטומטיות ישירות ללקוחות על סמך מה שקורה ב-ARBOX - לא רק אליך.</div>
             </div>
             <form method="POST" action="/admin/toggle-automations">
-              <button class="${automationsOn ? "btn-danger" : "btn-primary"}" type="submit">${automationsOn ? "כבה אוטומציות" : "הדלק אוטומציות"}</button>
+              <button class="${automationsOn ? "btn-danger" : "btn-primary"}" type="submit">${automationsOn ? "כבה הכל" : "הפעל ראשי"}</button>
             </form>
+          </div>
+
+          <div class="card card-pad" style="margin-top:12px;">
+            <div style="font-weight:600;">מתג לכל אוטומציה בנפרד</div>
+            <div class="toggle-desc" style="max-width:none;margin-bottom:12px;">
+              מה שכבוי לא מציע כלום ולא שולח כלום, בלי קשר למתג הראשי.
+              מדליקים אחת-אחת, אחרי שראית שההצעות שלה נכונות.
+            </div>
+            ${automationList
+              .map(
+                (a) => `
+              <form method="POST" action="/admin/toggle-automation" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid #eee;">
+                <input type="hidden" name="name" value="${esc(a.name)}">
+                <div>
+                  <span style="font-weight:600;">${esc(a.name)}</span>
+                  ${a.on ? `<span class="badge on" style="margin-inline-start:8px;">פעיל</span>` : `<span class="badge off" style="margin-inline-start:8px;">כבוי</span>`}
+                </div>
+                <button class="btn-sm ${a.on ? "btn-danger" : "btn-primary"}" type="submit">${a.on ? "כבה" : "הדלק"}</button>
+              </form>`
+              )
+              .join("")}
           </div>
 
           <div class="card card-pad toggle-row" style="margin-top:12px;">

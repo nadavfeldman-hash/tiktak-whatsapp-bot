@@ -27,6 +27,12 @@ function queueMessage(to, template, params = [], options = {}) {
   // the worst kind of fault, because it looks exactly like everything working.
   // Normalised here, in the one place every proposal passes through, so no
   // check can get it wrong again.
+  const label = TEMPLATE_LABELS[template] || template;
+  if (!automationOn(label)) {
+    console.log(`Automation "${label}" is off - not queueing ${template}.`);
+    return null;
+  }
+
   const phone = usablePhone(to);
   if (!phone) {
     console.log(`Skipping ${template}: unusable phone number ${to}`);
@@ -37,7 +43,7 @@ function queueMessage(to, template, params = [], options = {}) {
     to: phone,
     template,
     params,
-    automation: TEMPLATE_LABELS[template] || template,
+    automation: label,
     personName: params[0] || "",
     reason: options.reason || "",
     preview: renderTemplate(template, params),
@@ -57,18 +63,65 @@ function renderTemplate(name, params) {
 // written to rather than naming a template.
 const TEMPLATE_LABELS = {
   new_lead_details_request_v2: "ליד חדש",
-  lead_no_response_1_v2: "ליד שלא ענה",
-  lead_no_response_2: "ליד שלא ענה",
-  lead_no_response_3_v2: "ליד שלא ענה",
-  welcome_new_member_v2: "מצטרף חדש",
+  lead_no_response_1_v2: "שינוי סטטוס ליד",
+  lead_no_response_2: "שינוי סטטוס ליד",
+  lead_no_response_3_v2: "שינוי סטטוס ליד",
   lost_lead_goodbye_v2: "ליד אבוד",
-  failed_payment_reminder: "תשלום שנכשל",
+  welcome_new_member_v2: "מצטרף חדש",
+  new_member_checkin_v2: "צ׳ק-אין מצטרף חדש",
+  trial_reminder_day_before_v2: "תזכורת אימון ניסיון",
+  trial_reminder_same_day_v2: "תזכורת אימון ניסיון",
+  birthday_greeting_1_v2: "יום הולדת",
+  birthday_greeting_2_v2: "יום הולדת",
+  birthday_greeting_3_v2: "יום הולדת",
+  birthday_greeting_4_v2: "יום הולדת",
+  absence_reminder_1a: "נעדר מהאימונים",
+  absence_reminder_1b: "נעדר מהאימונים",
+  absence_reminder_1c: "נעדר מהאימונים",
+  absence_reminder_2a: "נעדר מהאימונים",
+  absence_reminder_2b: "נעדר מהאימונים",
+  absence_reminder_3: "נעדר מהאימונים",
   streak_milestone_v2: "רצף אימונים",
-  new_member_checkin_v2: "צ'ק-אין מצטרף חדש",
-  late_cancellation_callout: "ביטול מאוחר",
+  late_cancellation_callout: "ביטול בלי הרשמה מחדש",
   coach_trial_notice_morning: "עדכון למאמן",
   coach_replacement_notice: "החלפת מאמן",
+  failed_payment_reminder: "תשלום שנכשל",
 };
+
+// Every automation, whether or not a template for it exists yet. The panel
+// lists these, so a name that appears here is a switch Nadav can see and reach.
+const ALL_AUTOMATIONS = [
+  "ליד חדש",
+  "שינוי סטטוס ליד",
+  "ליד אבוד",
+  "מצטרף חדש",
+  "נעדר מהאימונים",
+  "יום הולדת",
+  "צ׳ק-אין מצטרף חדש",
+  "תזכורת אימון ניסיון",
+  "ביטול בלי הרשמה מחדש",
+  "רצף אימונים",
+  "עדכון למאמן",
+  "תשובה בשיחה",
+  // Listed even though no approved wording exists for them yet, so the panel
+  // shows the whole set. An automation missing from here would be one with no
+  // off switch, which is what the single global toggle amounted to.
+  "החלפת מאמן",
+  "תשלום שנכשל",
+];
+
+// Off unless switched on, one at a time, by name.
+//
+// It used to be a single switch for all seventeen at once, which meant the only
+// way to try one was to turn on the lot - and turning on the lot is how a
+// quiet evening became forty-six messages. Trust in these is earned one
+// automation at a time, and this is what lets that happen: an automation nobody
+// has vouched for cannot send, no matter what any other setting says.
+function automationOn(label) {
+  const enabled = store.getSettings().enabledAutomations;
+  if (!Array.isArray(enabled)) return false;
+  return enabled.includes(label);
+}
 
 
 // Small pause between messages in any loop that could message many different
@@ -1172,6 +1225,8 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
 
 module.exports = {
   lastRun,
+  ALL_AUTOMATIONS,
+  automationOn,
   isAfterGoLive,
   automationsStart,
   HARD_STOP_ACTIVE: HARD_STOP,

@@ -197,6 +197,38 @@ test("two replies to the same person both queue", async () => {
   assert.strictEqual(outbox.pending().length, 2, "two questions deserve two answers");
 });
 
+test("an automation nobody switched on proposes nothing at all", async () => {
+  // Off has to mean silent, not merely "does not send" - a queue full of
+  // suggestions from automations Nadav never enabled is noise he has to wade
+  // through, and noise is how a real proposal gets approved without being read.
+  reset();
+  clearOutbox();
+  const monitor = require("../src/arbox-monitor");
+  store.setSetting("enabledAutomations", []);
+  assert.strictEqual(monitor.automationOn("ליד חדש"), false, "nothing is on by default");
+
+  store.setSetting("enabledAutomations", ["ליד חדש"]);
+  assert.strictEqual(monitor.automationOn("ליד חדש"), true);
+  assert.strictEqual(monitor.automationOn("ליד אבוד"), false, "switching one on must not switch on its neighbours");
+});
+
+test("every automation has a switch that can reach it", async () => {
+  // A name used in the code but missing from the list would be an automation
+  // with no off switch - which is exactly what the single global toggle was.
+  const monitor = require("../src/arbox-monitor");
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const start = src.indexOf("const TEMPLATE_LABELS = {");
+  const block = src.slice(start, src.indexOf("};", start));
+  const named = new Set([...block.matchAll(/: "([^"]+)"/g)].map((m) => m[1]));
+  assert.ok(named.size > 5, "the label block should not read as empty");
+  for (const name of named) {
+    assert.ok(
+      monitor.ALL_AUTOMATIONS.includes(name),
+      `"${name}" is used but has no switch in the panel`
+    );
+  }
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();
