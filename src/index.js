@@ -68,6 +68,13 @@ app.get("/status", (req, res) => {
             : !!store.getSettings().customerAutomationsEnabled,
     },
     automationsStartFrom: process.env.AUTOMATIONS_START_DATE || "built-in default",
+    // Which automations are on, and which send without waiting. Reading this
+    // off the rendered dashboard meant parsing HTML and guessing; a wrong guess
+    // about whether something is armed is exactly the guess not to get wrong.
+    automations: {
+      enabled: store.getSettings().enabledAutomations || [],
+      sendWithoutApproval: store.getSettings().autoApproveAutomations || [],
+    },
     // The fuse underneath everything: how many messages have actually left in
     // the last hour and day, and whether it has cut the power.
     fuse: require("./fuse").status(),
