@@ -1,4 +1,13 @@
+const fuse = require("./fuse");
+
 const GRAPH_VERSION = "v20.0";
+
+// Read fresh each time so it can be flipped from the admin panel without a
+// redeploy - a redeploy is the last thing you want in the middle of an incident.
+function shadowMode() {
+  if (process.env.SHADOW_MODE === "true") return true;
+  return Boolean(require("./store").getSettings().shadowMode);
+}
 
 // The number is hosted by 360dialog (Coexistence onboarding, Aug 2026), so we
 // send through their gateway rather than Graph. Same JSON payloads, different
@@ -108,6 +117,26 @@ async function sendTemplate(to, templateName, params = [], options = {}) {
     return null;
   }
 
+  // The fuse (see fuse.js) is checked last, so it sees only messages that
+  // everything else already approved. It knows nothing about why any particular
+  // message qualified - only how many are leaving - which is what makes it hold
+  // when a check is wrong in a way nobody predicted.
+  const blocked = fuse.blockReason();
+  if (blocked) {
+    console.error(`Blocked ${templateName} to ${to}: ${blocked}`);
+    return null;
+  }
+
+  // Shadow mode: work out every message, send none of them. This is what any
+  // change to the automations should run under first - the log then says
+  // precisely who would have been written to, on real data, with no way for a
+  // mistake to reach a customer.
+  if (shadowMode()) {
+    console.log(`[SHADOW] would send ${templateName} to ${to} [${params.join(" | ")}]`);
+    recordSent(to, templateName);
+    return null;
+  }
+
   const res = await fetch(apiUrl(), {
     method: "POST",
     headers: {
@@ -134,6 +163,7 @@ async function sendTemplate(to, templateName, params = [], options = {}) {
     throw new Error(`WhatsApp template send failed: ${res.status} ${errText}`);
   }
   recordSent(to, templateName);
+  fuse.record();
   return res;
 }
 
@@ -178,4 +208,4 @@ function extractIncomingText(body) {
   return { from: message.from, id: message.id, text: message.text.body };
 }
 
-module.exports = { sendText, sendTemplate, sendBurst, markAsRead, extractIncomingText };
+module.exports = { sendText, sendTemplate, sendBurst, markAsRead, extractIncomingText, shadowMode };

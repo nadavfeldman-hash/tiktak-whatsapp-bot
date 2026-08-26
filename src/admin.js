@@ -289,6 +289,22 @@ router.post("/toggle-automations", express.urlencoded({ extended: false }), requ
   res.redirect("/admin/dashboard#automations");
 });
 
+// Arming the fuse again is deliberately a person's decision and nothing else's.
+// No timer clears it and no deploy clears it - if it cut the power, something
+// was wrong, and it stays off until somebody has looked at why.
+router.post("/reset-fuse", requireAuth, (req, res) => {
+  require("./fuse").reset();
+  res.redirect("/admin/dashboard?fuse=reset#automations");
+});
+
+// Shadow mode: the automations run and decide as normal, and every message they
+// decide on is written to the log instead of being sent. Any change worth being
+// careful about should spend a day here first.
+router.post("/toggle-shadow", requireAuth, (req, res) => {
+  store.setSetting("shadowMode", !store.getSettings().shadowMode);
+  res.redirect("/admin/dashboard#automations");
+});
+
 router.post("/notes/add", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const text = (req.body.text || "").trim();
   if (text) store.addAdminNote(text);
@@ -441,6 +457,8 @@ router.get("/dashboard", requireAuth, async (req, res) => {
     : `<tr><td colspan="2"><div class="empty-state">עדיין לא נלמדו עדכונים</div></td></tr>`;
 
   const automationsOn = !!settings.customerAutomationsEnabled;
+  const shadowOn = require("./whatsapp").shadowMode();
+  const fuseInfo = require("./fuse").status();
 
   // The two questions that actually matter - can the bot answer people, and can
   // it start conversations - answered from the real state of every switch
@@ -606,6 +624,34 @@ router.get("/dashboard", requireAuth, async (req, res) => {
             <form method="POST" action="/admin/toggle-automations">
               <button class="${automationsOn ? "btn-danger" : "btn-primary"}" type="submit">${automationsOn ? "כבה אוטומציות" : "הדלק אוטומציות"}</button>
             </form>
+          </div>
+
+          <div class="card card-pad toggle-row" style="margin-top:12px;">
+            <div>
+              <div style="font-weight:600;">🧪 מצב בדיקה</div>
+              <div class="toggle-desc">האוטומציות רצות ומחליטות כרגיל, אבל שום הודעה לא יוצאת - רק נרשמת. ככה רואים בדיוק מי היה מקבל מה, בלי סיכון.</div>
+            </div>
+            <form method="POST" action="/admin/toggle-shadow">
+              <button class="${shadowOn ? "btn-primary" : ""}" type="submit">${shadowOn ? "כבה מצב בדיקה" : "הדלק מצב בדיקה"}</button>
+            </form>
+          </div>
+
+          <div class="card card-pad" style="margin-top:12px;${fuseInfo.tripped ? "border:2px solid #c0392b;" : ""}">
+            <div style="font-weight:600;">${fuseInfo.tripped ? "🛑 הנתיך קפוץ - לא יוצאות הודעות" : "🔒 נתיך בטיחות - תקין"}</div>
+            <div class="toggle-desc" style="max-width:none;margin-top:6px;">
+              ${fuseInfo.tripped
+                ? `נעצר ב-${new Date(fuseInfo.trippedAt).toLocaleString("he-IL")} כי יצאו ${fuseInfo.reason}. שום הודעה לא תצא עד שתאפס כאן ידנית.`
+                : "אם מסיבה כלשהי יתחילו לצאת הרבה הודעות בבת אחת, זה עוצר הכל אוטומטית ושולח לך הודעה. לא משנה איזו אוטומציה ביקשה."}
+            </div>
+            <div class="toggle-desc" style="max-width:none;margin-top:6px;">
+              יצאו בשעה האחרונה: <strong>${fuseInfo.lastHour}</strong> מתוך ${fuseInfo.maxPerHour} ·
+              ביממה: <strong>${fuseInfo.lastDay}</strong> מתוך ${fuseInfo.maxPerDay}
+            </div>
+            ${fuseInfo.tripped
+              ? `<form method="POST" action="/admin/reset-fuse" style="margin-top:10px;" onsubmit="return confirm('לאפס את הנתיך ולאפשר שוב שליחת הודעות?')">
+                   <button class="btn-danger" type="submit">אפס נתיך והפעל מחדש</button>
+                 </form>`
+              : ""}
           </div>
         </div>
 

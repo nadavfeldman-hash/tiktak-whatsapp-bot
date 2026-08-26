@@ -1,0 +1,122 @@
+// A fuse in front of every outgoing template, sitting underneath all the
+// per-automation logic.
+//
+// Every incident this bot has caused has had the same shape: some check decided
+// that a large group of people all qualified at the same moment, and the code
+// dutifully messaged all of them. The weekly summary reaching every member. A
+// widened query making 465 old leads look new. Each time the fix was another
+// `if` inside that particular check - and each time the next incident came from
+// a different check that did not have it.
+//
+// This is the guard that does not depend on any check being written correctly.
+// It counts what actually leaves the building, and if that count stops looking
+// like a gym's normal day it cuts the power and tells Nadav. Real activity here
+// is a handful of messages an hour: a lead arrives, someone's status moves,
+// somebody has a birthday. Twenty in an hour is never real.
+//
+// It is a fuse and not a throttle on purpose. A throttle would slow a flood
+// down and then deliver it anyway. Once this trips, everything stops until a
+// person looks at it and resets it from the admin panel.
+
+const store = require("./store");
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+// Deliberately low. Being woken to reset a fuse that did not need resetting
+// costs a minute; the other kind of mistake costs customers.
+const MAX_PER_HOUR = 8;
+const MAX_PER_DAY = 25;
+
+function fuseState() {
+  return store.getArboxState().fuse || {};
+}
+
+function isTripped() {
+  return Boolean(fuseState().trippedAt);
+}
+
+function status() {
+  const f = fuseState();
+  const recent = recentSends();
+  return {
+    tripped: Boolean(f.trippedAt),
+    trippedAt: f.trippedAt || null,
+    reason: f.reason || null,
+    lastHour: countSince(recent, HOUR_MS),
+    lastDay: countSince(recent, DAY_MS),
+    maxPerHour: MAX_PER_HOUR,
+    maxPerDay: MAX_PER_DAY,
+  };
+}
+
+// The running tally of sends, kept separately from sentTemplateLog. That log is
+// keyed by person and template, so a second send to the same pair overwrites the
+// first and the flood undercounts itself - exactly when the count matters most.
+function recentSends() {
+  const list = store.getArboxState().recentSendTimes || [];
+  const cutoff = Date.now() - DAY_MS;
+  return list.filter((t) => new Date(t).getTime() >= cutoff);
+}
+
+function countSince(times, windowMs) {
+  const cutoff = Date.now() - windowMs;
+  return times.filter((t) => new Date(t).getTime() >= cutoff).length;
+}
+
+// Called before a send. Returns a reason to refuse, or null to allow.
+function blockReason() {
+  if (isTripped()) {
+    return `הנתיך קפץ ב-${fuseState().trippedAt} (${fuseState().reason}) - צריך איפוס ידני`;
+  }
+  const recent = recentSends();
+  if (countSince(recent, HOUR_MS) >= MAX_PER_HOUR) {
+    return trip(`${MAX_PER_HOUR} הודעות בשעה האחרונה`);
+  }
+  if (countSince(recent, DAY_MS) >= MAX_PER_DAY) {
+    return trip(`${MAX_PER_DAY} הודעות ביממה האחרונה`);
+  }
+  return null;
+}
+
+function trip(reason) {
+  const state = store.getArboxState();
+  store.setArboxState({ ...state, fuse: { trippedAt: new Date().toISOString(), reason } });
+  console.error(`FUSE TRIPPED: ${reason}. All template sending is now stopped.`);
+  notifyAdmin(reason);
+  return `הנתיך קפץ: ${reason}`;
+}
+
+// Best effort, and never allowed to throw: if warning Nadav fails, the fuse must
+// still hold. Sent as plain text rather than a template so it cannot itself be
+// stopped by the very thing it is reporting.
+function notifyAdmin(reason) {
+  const admin = process.env.ADMIN_PHONE;
+  if (!admin) return;
+  const whatsapp = require("./whatsapp");
+  whatsapp
+    .sendText(
+      admin,
+      `🛑 עצרתי את כל ההודעות האוטומטיות.\nהסיבה: ${reason}.\nזה חריג ולא אמור לקרות ביום רגיל - כנראה יש תקלה.\nכלום לא ייצא עד שתאפס בפאנל.`
+    )
+    .catch(() => {});
+}
+
+// Called after a send actually succeeds.
+function record() {
+  const state = store.getArboxState();
+  const times = (state.recentSendTimes || []).concat(new Date().toISOString());
+  const cutoff = Date.now() - DAY_MS;
+  store.setArboxState({
+    ...state,
+    recentSendTimes: times.filter((t) => new Date(t).getTime() >= cutoff),
+  });
+}
+
+function reset() {
+  const state = store.getArboxState();
+  store.setArboxState({ ...state, fuse: {}, recentSendTimes: [] });
+  console.log("Fuse reset by hand.");
+}
+
+module.exports = { blockReason, record, reset, status, isTripped, MAX_PER_HOUR, MAX_PER_DAY };

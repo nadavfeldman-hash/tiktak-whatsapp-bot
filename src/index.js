@@ -46,6 +46,10 @@ app.get("/status", (req, res) => {
             : !!store.getSettings().customerAutomationsEnabled,
     },
     automationsStartFrom: process.env.AUTOMATIONS_START_DATE || "built-in default",
+    // The fuse underneath everything: how many messages have actually left in
+    // the last hour and day, and whether it has cut the power.
+    fuse: require("./fuse").status(),
+    shadowMode: require("./whatsapp").shadowMode(),
     // What the monitor currently believes each lead's status is. Without seeing
     // this there is no way to tell a "nothing changed" from a bug.
     leadStatusSnapshot: store.getArboxState().leadStatusSnapshot || null,
