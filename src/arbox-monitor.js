@@ -318,7 +318,10 @@ async function checkNewMembers() {
   for (const c of converted) {
     if (welcomed.has(String(c.user_id))) continue;
     if (!isFirstRun && c.phone) {
-      await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name]);
+      // Converting a lead to a member is likewise Nadav's own doing.
+      await whatsapp.sendTemplate(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name], {
+        deliberate: true,
+      });
       await sleep(PACE_MS);
     }
     welcomed.add(String(c.user_id));
@@ -343,7 +346,12 @@ async function checkLostLeads() {
   for (const c of lost) {
     if (saidGoodbye.has(String(c.user_id))) continue;
     if (!isFirstRun && c.phone) {
-      await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name]);
+      // Marking a lead lost is Nadav closing that file himself, the same kind of
+      // deliberate act as moving a status - so it is not held back by the
+      // blanket protection, only by the no-repeats rule.
+      await whatsapp.sendTemplate(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name], {
+        deliberate: true,
+      });
       await sleep(PACE_MS);
     }
     saidGoodbye.add(String(c.user_id));
