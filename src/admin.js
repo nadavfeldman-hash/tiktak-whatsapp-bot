@@ -286,6 +286,18 @@ router.post("/unprotect-status-leads", requireAuth, async (req, res) => {
 // One automation at a time, by name. The old single switch meant the only way
 // to try one was to turn on all seventeen, and turning on all seventeen is how
 // a quiet evening became forty-six messages.
+// Approved in advance, by name. Used where the trigger is Nadav doing something
+// himself - moving a lead status - so that waiting for him to approve the result
+// of his own action adds a step without adding a decision.
+router.post("/toggle-auto-approve", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  const name = req.body.name;
+  const list = store.getSettings().autoApproveAutomations || [];
+  const next = list.includes(name) ? list.filter((x) => x !== name) : list.concat(name);
+  store.setSetting("autoApproveAutomations", next);
+  console.log(`Auto-approve for "${name}" is now ${next.includes(name) ? "ON" : "OFF"}.`);
+  res.redirect("/admin/dashboard#automations");
+});
+
 router.post("/toggle-automation", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const name = req.body.name;
   const enabled = store.getSettings().enabledAutomations || [];
@@ -542,7 +554,12 @@ router.get("/dashboard", requireAuth, async (req, res) => {
   const fuseInfo = require("./fuse").status();
   const pendingItems = require("./outbox").pending();
   const monitor = require("./arbox-monitor");
-  const automationList = monitor.ALL_AUTOMATIONS.map((name) => ({ name, on: monitor.automationOn(name) }));
+  const autoList = store.getSettings().autoApproveAutomations || [];
+  const automationList = monitor.ALL_AUTOMATIONS.map((name) => ({
+    name,
+    on: monitor.automationOn(name),
+    auto: autoList.includes(name),
+  }));
 
   // The two questions that actually matter - can the bot answer people, and can
   // it start conversations - answered from the real state of every switch

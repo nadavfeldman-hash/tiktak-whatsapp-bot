@@ -108,9 +108,27 @@ function propose(p) {
     // What the customer actually asked, so the answer can be judged against it.
     incoming: p.incoming || "",
   };
+  // Some automations are approved in advance, by name. Moving a lead to "no
+  // answer" in Arbox is Nadav performing the decision himself - asking him to
+  // then approve the consequence of his own action in a second place is a
+  // formality, and formalities are what get clicked without reading.
+  //
+  // It changes nothing else: the proposal is still built the same way, still
+  // de-duplicated, and still passes every guard on the way out. Only the wait
+  // for a human is skipped, and only where he has said so.
+  if (autoApproved(item.automation)) {
+    item.status = "approved";
+    item.autoApproved = true;
+  }
+
   data.items.push(item);
   write(data);
   return item;
+}
+
+function autoApproved(automation) {
+  const list = store.getSettings().autoApproveAutomations;
+  return Array.isArray(list) && list.includes(automation);
 }
 
 // Propose a whole automation's worth of decisions at once, so an implausible

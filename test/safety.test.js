@@ -246,6 +246,32 @@ test("nothing is queued twice in the gap between approving and sending", async (
   assert.strictEqual(sentCount, 1, "and exactly one may leave");
 });
 
+test("auto-approve applies only to the automation it was granted to", async () => {
+  reset();
+  clearOutbox();
+  store.setSetting("autoApproveAutomations", ["שינוי סטטוס ליד"]);
+
+  outbox.propose({ to: "972500000101", template: "lead_no_response_1_v2", params: ["א"], automation: "שינוי סטטוס ליד" });
+  outbox.propose({ to: "972500000102", template: "welcome_new_member_v2", params: ["ב"], automation: "מצטרף חדש" });
+
+  await outbox.send();
+  assert.strictEqual(sentCount, 1, "only the automation Nadav pre-approved may go on its own");
+  assert.strictEqual(outbox.pending().length, 1, "the other still waits for him");
+  store.setSetting("autoApproveAutomations", []);
+});
+
+test("auto-approve does not weaken the no-duplicates rule", async () => {
+  reset();
+  clearOutbox();
+  store.setSetting("autoApproveAutomations", ["שינוי סטטוס ליד"]);
+  for (let i = 0; i < 5; i++) {
+    outbox.propose({ to: "972500000103", template: "lead_no_response_1_v2", params: ["ג"], automation: "שינוי סטטוס ליד" });
+    await outbox.send();
+  }
+  assert.strictEqual(sentCount, 1, "skipping the wait must not skip the guards");
+  store.setSetting("autoApproveAutomations", []);
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

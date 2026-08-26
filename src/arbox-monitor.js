@@ -1221,6 +1221,27 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
   };
   runAll();
   setInterval(runAll, intervalMs);
+
+  // A status Nadav sets by hand is the one thing here that happens while
+  // somebody is watching: he moves a lead to "no answer" and then looks at his
+  // phone to see whether it worked. Two minutes of nothing reads as broken, and
+  // he checked and reported it as broken within that window. So this one check
+  // runs on its own short loop rather than waiting for the main cycle.
+  //
+  // It is the cheapest of the checks - one report, no pagination - but ten
+  // seconds is still six calls a minute, so a failure backs off rather than
+  // hammering Arbox until it blocks us.
+  let backoffUntil = 0;
+  setInterval(async () => {
+    if (Date.now() < backoffUntil) return;
+    try {
+      await checkLeadNoResponse();
+      await outbox.send();
+    } catch (e) {
+      backoffUntil = Date.now() + 60 * 1000;
+      console.error("Fast lead check failed, pausing a minute:", e.message);
+    }
+  }, 10 * 1000);
 }
 
 module.exports = {
