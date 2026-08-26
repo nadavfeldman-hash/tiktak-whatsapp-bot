@@ -310,9 +310,15 @@ async function checkNewMembers() {
   // any high-water mark, and is never welcomed at all. A silent miss, which is
   // exactly the kind that goes unnoticed.
   const welcomed = new Set(state.welcomedUserIds || []);
-  const isFirstRun = state.welcomedUserIds === undefined;
-
   const converted = await arbox.getAllConvertedLeads();
+
+  // Same guard as the lost-lead check: a sudden jump in how many people we can
+  // see means the query widened, not that they all joined today.
+  const unseen = converted.filter((c) => !welcomed.has(String(c.user_id))).length;
+  const isFirstRun = state.welcomedUserIds === undefined || unseen > 20;
+  if (isFirstRun && unseen > 20) {
+    console.log(`New members: ${unseen} unseen at once - recording silently rather than messaging them.`);
+  }
 
   for (const c of converted) {
     if (welcomed.has(String(c.user_id))) continue;
@@ -337,9 +343,17 @@ async function checkLostLeads() {
   // not the highest id seen, because the list is unordered and ids predate the
   // event.
   const saidGoodbye = new Set(state.saidGoodbyeUserIds || []);
-  const isFirstRun = state.saidGoodbyeUserIds === undefined;
-
   const lost = await arbox.getAllLostLeads();
+
+  // Widening the query from 50 records to all 515 would otherwise look like 465
+  // people going lost at once, and message every one of them. Any jump this
+  // large is a change in what we can see, not in what happened, so the list is
+  // recorded in silence and normal behaviour resumes from the next cycle.
+  const unseen = lost.filter((c) => !saidGoodbye.has(String(c.user_id))).length;
+  const isFirstRun = state.saidGoodbyeUserIds === undefined || unseen > 20;
+  if (isFirstRun && unseen > 20) {
+    console.log(`Lost leads: ${unseen} unseen at once - recording silently rather than messaging them.`);
+  }
 
   for (const c of lost) {
     if (saidGoodbye.has(String(c.user_id))) continue;
