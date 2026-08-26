@@ -784,7 +784,14 @@ router.get("/dashboard", requireAuth, async (req, res) => {
                   ${a.on ? `<span class="badge on" style="margin-inline-start:8px;">פעיל</span>` : `<span class="badge off" style="margin-inline-start:8px;">כבוי</span>`}
                 </div>
                 <button class="btn-sm ${a.on ? "btn-danger" : "btn-primary"}" type="submit">${a.on ? "כבה" : "הדלק"}</button>
-              </form>`
+              </form>
+              ${a.on
+                ? `<form method="POST" action="/admin/toggle-auto-approve" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:0 18px 9px 0;border-bottom:1px solid #eee;">
+                     <input type="hidden" name="name" value="${esc(a.name)}">
+                     <span class="toggle-desc" style="margin:0;">${a.auto ? "🚀 נשלח מיד, בלי לחכות לאישור" : "✋ מחכה לאישור שלך"}</span>
+                     <button class="btn-sm btn-ghost" type="submit">${a.auto ? "החזר לאישור ידני" : "שלח בלי אישור"}</button>
+                   </form>`
+                : ""}`
               )
               .join("")}
           </div>
