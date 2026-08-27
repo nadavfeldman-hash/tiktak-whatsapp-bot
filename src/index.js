@@ -78,6 +78,8 @@ app.get("/status", (req, res) => {
     // The fuse underneath everything: how many messages have actually left in
     // the last hour and day, and whether it has cut the power.
     fuse: require("./fuse").status(),
+    // What actually reached a phone, as WhatsApp reports it back.
+    delivery: (store.getArboxState().deliveryStatus || []).slice(-40),
     // How many messages are waiting for Nadav. Nothing here has been sent.
     awaitingApproval: require("./outbox").counts(),
     shadowMode: require("./whatsapp").shadowMode(),
@@ -128,6 +130,20 @@ app.post("/webhook", async (req, res) => {
             (s.errors ? ` errors=${JSON.stringify(s.errors)}` : "")
         );
       }
+      // Kept, not just logged. WhatsApp accepting a message means only that it
+      // took it; whether it reached the phone arrives later, here. Without this
+      // the honest answer to "did they get it?" was a shrug - the send log said
+      // sent, and sent is not delivered. Now the answer is a fact.
+      const state = store.getArboxState();
+      const recent = (state.deliveryStatus || []).concat(
+        statuses.map((s) => ({
+          at: new Date().toISOString(),
+          to: s.recipient_id,
+          status: s.status,
+          error: s.errors ? s.errors.map((e) => e.title || e.message).join("; ") : null,
+        }))
+      );
+      store.setArboxState({ ...state, deliveryStatus: recent.slice(-200) });
     }
 
     incoming = whatsapp.extractIncomingText(req.body);
