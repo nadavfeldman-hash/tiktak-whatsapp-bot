@@ -69,6 +69,7 @@ const TEMPLATE_LABELS = {
   lost_lead_goodbye_v2: "ליד אבוד",
   welcome_new_member_v2: "מצטרף חדש",
   new_member_checkin_v2: "צ׳ק-אין מצטרף חדש",
+  trial_booking_confirmed: "נרשם לאימון ניסיון",
   trial_reminder_day_before_v2: "תזכורת אימון ניסיון",
   trial_reminder_same_day_v2: "תזכורת אימון ניסיון",
   birthday_greeting_1_v2: "יום הולדת",
@@ -98,6 +99,7 @@ const ALL_AUTOMATIONS = [
   "נעדר מהאימונים",
   "יום הולדת",
   "צ׳ק-אין מצטרף חדש",
+  "נרשם לאימון ניסיון",
   "תזכורת אימון ניסיון",
   "ביטול בלי הרשמה מחדש",
   "רצף אימונים",
@@ -518,6 +520,69 @@ async function findTrialRegistrations(dateStr) {
 
 const TRIAL_REMINDER_DAY_BEFORE_HOUR = 19; // evening before
 const TRIAL_REMINDER_SAME_DAY_HOUR = 9; // morning of
+
+// Confirm a trial the moment it is booked.
+//
+// The two reminders that already exist speak the evening before and on the
+// morning itself, which leaves whoever booked on a Tuesday for next Sunday with
+// five days of silence after the one action that says they are seriously
+// considering this. The confirmation closes that gap: it lands while they are
+// still on the page, with the address and what to bring.
+const TRIAL_CONFIRM_LOOKAHEAD_DAYS = 21;
+const HEBREW_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+function hebrewWhen(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  // Never begins with a digit: a line starting with a number flips direction in
+  // Hebrew and the date comes out reversed on the phone.
+  return `יום ${HEBREW_DAYS[d.getDay()]} ${d.getDate()}.${d.getMonth() + 1}`;
+}
+
+async function checkTrialBookings() {
+  if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+
+  const state = store.getArboxState();
+  const confirmed = new Set(state.confirmedTrialKeys || []);
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const found = [];
+  for (let i = 0; i <= TRIAL_CONFIRM_LOOKAHEAD_DAYS; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    found.push(...(await findTrialRegistrations(fmt(d))));
+  }
+
+  // Trials already on the books when this was switched on were booked before
+  // anybody promised them a confirmation, and a note about a session they
+  // arranged last week reads as a mistake. They are recorded in silence and the
+  // automation starts from now, the same way the absence reminders do.
+  const unseen = found.filter(({ session, reg }) => !confirmed.has(`${session.schedule_id}:${reg.user_id}`));
+  const firstRun = state.confirmedTrialKeys === undefined;
+
+  let changed = false;
+  for (const { session, reg } of found) {
+    const key = `${session.schedule_id}:${reg.user_id}`;
+    if (confirmed.has(key)) continue;
+
+    if (!firstRun && reg.phone && isAfterGoLive(reg.booking_time)) {
+      await queueMessage(reg.phone.replace("+", ""), "trial_booking_confirmed", [
+        (reg.full_name || "").split(" ")[0],
+        hebrewWhen(session.date),
+        String(session.start_time || "").slice(0, 5),
+      ]);
+    }
+    confirmed.add(key);
+    changed = true;
+  }
+
+  if (firstRun) {
+    console.log(`Trial bookings: starting from now - ${unseen.length} already booked, recorded in silence.`);
+  }
+  if (changed) {
+    store.setArboxState({ ...state, confirmedTrialKeys: Array.from(confirmed) });
+  }
+}
 
 async function checkTrialReminders() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
@@ -1204,6 +1269,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     checkFailedPayments().catch((e) => console.error("Arbox monitor (failed payments) error:", e.message));
     checkNewMembers().catch((e) => console.error("Arbox monitor (new members) error:", e.message));
     checkLostLeads().catch((e) => console.error("Arbox monitor (lost leads) error:", e.message));
+    checkTrialBookings().catch((e) => console.error("Arbox monitor (trial bookings) error:", e.message));
     checkTrialReminders().catch((e) => console.error("Arbox monitor (trial reminders) error:", e.message));
     checkAbsences().catch((e) => console.error("Arbox monitor (absences) error:", e.message));
     checkCoachTrialNotices().catch((e) => console.error("Arbox monitor (coach notices) error:", e.message));
@@ -1283,6 +1349,7 @@ module.exports = {
   checkFailedPayments,
   checkNewMembers,
   checkLostLeads,
+  checkTrialBookings,
   checkTrialReminders,
   checkAbsences,
   checkLeadNoResponse,
