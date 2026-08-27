@@ -23,10 +23,18 @@ const store = require("./store");
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-// Deliberately low. Being woken to reset a fuse that did not need resetting
-// costs a minute; the other kind of mistake costs customers.
-const MAX_PER_HOUR = 8;
-const MAX_PER_DAY = 25;
+// Set when the automations sent on their own with nothing above them. Since
+// then a proposal has to pass a per-automation switch, a de-duplication rule and
+// a seven-day repeat rule before it reaches here, and Nadav works in bursts -
+// six status changes in four minutes on an ordinary morning took this to seven
+// of eight, one away from locking him out of his own tool for no reason.
+//
+// Twenty an hour still leaves it doing its job: the day this was written to
+// prevent put forty-six messages out in three seconds. A fuse that trips during
+// normal work gets resented and then ignored, and an ignored fuse protects
+// nobody.
+const MAX_PER_HOUR = 20;
+const MAX_PER_DAY = 60;
 
 function fuseState() {
   return store.getArboxState().fuse || {};
