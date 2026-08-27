@@ -1236,12 +1236,35 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
     if (Date.now() < backoffUntil) return;
     try {
       await checkLeadNoResponse();
+      // A new lead is the other thing that cannot wait. Somebody left their
+      // details and is deciding right now whether this place is worth their
+      // time; one who arrived at nine in the evening sat unanswered until the
+      // morning because this ran on the slow cycle. It is a single request with
+      // no pagination, so it is cheap enough to ask often.
+      await checkNewLeads();
       await outbox.send();
     } catch (e) {
       backoffUntil = Date.now() + 60 * 1000;
       console.error("Fast lead check failed, pausing a minute:", e.message);
     }
   }, 10 * 1000);
+
+  // Lost leads sit on their own slower loop. Marking one lost is also something
+  // Nadav does by hand and then watches for, but the list is five hundred
+  // records across three pages - asking every ten seconds would be eighteen
+  // requests a minute at Arbox for a thing that happens a few times a day.
+  // Thirty seconds is still immediate to a person and a sixth of the traffic.
+  let lostBackoff = 0;
+  setInterval(async () => {
+    if (Date.now() < lostBackoff) return;
+    try {
+      await checkLostLeads();
+      await outbox.send();
+    } catch (e) {
+      lostBackoff = Date.now() + 2 * 60 * 1000;
+      console.error("Lost-lead check failed, pausing two minutes:", e.message);
+    }
+  }, 30 * 1000);
 }
 
 module.exports = {
