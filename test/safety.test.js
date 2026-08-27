@@ -272,6 +272,47 @@ test("auto-approve does not weaken the no-duplicates rule", async () => {
   store.setSetting("autoApproveAutomations", []);
 });
 
+test("no check is wired into more than one loop", async () => {
+  // Three checks were moved onto short loops and left on the main one as well,
+  // so two copies of each ran at the same moment: both read the state, both
+  // decided the same person qualified, and both sent before either had recorded
+  // anything. Four people were written to twice.
+  //
+  // The de-duplication rules could not catch it - they compare against what has
+  // been written down, and neither copy had written yet. Nothing in the suite
+  // asked the one question that mattered: how many times is each check called?
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const wiring = src.slice(src.indexOf("function startMonitoring"));
+  const names = [...wiring.matchAll(/\b(check[A-Z]\w+)\s*\(\s*\)/g)].map((m) => m[1]);
+
+  const counts = {};
+  for (const n of names) counts[n] = (counts[n] || 0) + 1;
+  const twice = Object.entries(counts).filter(([, c]) => c > 1);
+  assert.deepStrictEqual(
+    twice,
+    [],
+    `these checks are started from more than one place: ${twice.map(([n, c]) => `${n} (${c})`).join(", ")}`
+  );
+});
+
+test("a check already running is skipped, not run twice", async () => {
+  // The wiring test above catches the mistake in source. This catches it in
+  // behaviour, for whatever wiring nobody thought to check.
+  const monitor = require("../src/arbox-monitor");
+  assert.strictEqual(typeof monitor.once, "function", "the guard must be reachable to be trusted");
+
+  let running = 0;
+  let peak = 0;
+  const slow = monitor.once("test", async () => {
+    running++;
+    peak = Math.max(peak, running);
+    await new Promise((r) => setTimeout(r, 30));
+    running--;
+  });
+  await Promise.all([slow(), slow(), slow()]);
+  assert.strictEqual(peak, 1, "two copies of one check must never overlap");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

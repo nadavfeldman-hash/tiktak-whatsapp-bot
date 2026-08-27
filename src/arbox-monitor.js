@@ -1258,17 +1258,48 @@ function record(label, promise) {
     });
 }
 
+// Never let the same check run twice at once.
+//
+// Moving three checks onto short loops without removing them from the main one
+// left two copies of each running at the same moment: both read the state, both
+// concluded the same person qualified, and both sent before either had recorded
+// anything. Four people were written to twice within the hour.
+//
+// The de-duplication rules could not help - they compare against what has been
+// written down, and neither copy had written anything yet. The only fix that
+// holds is not running the check twice at all, and this makes that true whatever
+// anyone wires up later: a second call while the first is still going is
+// skipped, not queued.
+const running = new Set();
+function once(name, fn) {
+  return async () => {
+    if (running.has(name)) {
+      console.log(`Skipping ${name}: previous run still going.`);
+      return;
+    }
+    running.add(name);
+    try {
+      await fn();
+    } finally {
+      running.delete(name);
+    }
+  };
+}
+
 function startMonitoring(intervalMs = 2 * 60 * 1000) {
   const runAll = () => {
-    record("lead no-response", checkLeadNoResponse());
-    checkNewLeads().catch((e) => console.error("Arbox monitor (leads) error:", e.message));
+    // checkLeadNoResponse, checkNewLeads and checkLostLeads are deliberately
+    // absent here. They run on the short loops below instead, and leaving them
+    // in both places meant two copies of the same check running at the same
+    // moment: both read the state, both decided the same person qualified, and
+    // both sent before either had recorded anything. Four people were written to
+    // twice within an hour of it going live. One check, one loop.
     checkDebtReport().catch((e) => console.error("Arbox monitor (debt) error:", e.message));
     checkAttendanceReport().catch((e) => console.error("Arbox monitor (attendance) error:", e.message));
     checkDueTasks().catch((e) => console.error("Arbox monitor (tasks) error:", e.message));
     checkBirthdays().catch((e) => console.error("Arbox monitor (birthdays) error:", e.message));
     checkFailedPayments().catch((e) => console.error("Arbox monitor (failed payments) error:", e.message));
     checkNewMembers().catch((e) => console.error("Arbox monitor (new members) error:", e.message));
-    checkLostLeads().catch((e) => console.error("Arbox monitor (lost leads) error:", e.message));
     checkTrialBookings().catch((e) => console.error("Arbox monitor (trial bookings) error:", e.message));
     checkTrialReminders().catch((e) => console.error("Arbox monitor (trial reminders) error:", e.message));
     checkAbsences().catch((e) => console.error("Arbox monitor (absences) error:", e.message));
@@ -1301,13 +1332,13 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
   setInterval(async () => {
     if (Date.now() < backoffUntil) return;
     try {
-      await checkLeadNoResponse();
+      await once("leadNoResponse", checkLeadNoResponse)();
       // A new lead is the other thing that cannot wait. Somebody left their
       // details and is deciding right now whether this place is worth their
       // time; one who arrived at nine in the evening sat unanswered until the
       // morning because this ran on the slow cycle. It is a single request with
       // no pagination, so it is cheap enough to ask often.
-      await checkNewLeads();
+      await once("newLeads", checkNewLeads)();
       await outbox.send();
     } catch (e) {
       backoffUntil = Date.now() + 60 * 1000;
@@ -1324,7 +1355,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
   setInterval(async () => {
     if (Date.now() < lostBackoff) return;
     try {
-      await checkLostLeads();
+      await once("lostLeads", checkLostLeads)();
       await outbox.send();
     } catch (e) {
       lostBackoff = Date.now() + 2 * 60 * 1000;
@@ -1335,6 +1366,7 @@ function startMonitoring(intervalMs = 2 * 60 * 1000) {
 
 module.exports = {
   lastRun,
+  once,
   ALL_AUTOMATIONS,
   automationOn,
   isAfterGoLive,
