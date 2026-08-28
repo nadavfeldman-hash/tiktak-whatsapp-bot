@@ -460,6 +460,21 @@ test("a message that never arrived is surfaced, not just stored", async () => {
   assert.strictEqual(failed[0].to, "972500000701");
 });
 
+test("a birthday greeting only goes to someone who actually trains here", async () => {
+  // Arbox's birthday report is not a list of members - it returns everyone it
+  // holds a birthday for, including people who left long ago and people who once
+  // left their details and never came. On the day this was measured, three of
+  // the four names in it were not training here, and all three would have been
+  // wished many happy returns by a gym they do not attend.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const start = src.indexOf("async function checkBirthdays");
+  const check = src.slice(start, src.indexOf("\n}", start));
+  assert.ok(
+    check.includes("getAllActiveMembers"),
+    "the birthday list must be crossed against the people who actually train here"
+  );
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

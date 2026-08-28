@@ -426,7 +426,24 @@ async function checkBirthdays() {
   if (state.lastBirthdayCheckDate === today || currentHour < BIRTHDAY_HOUR) return;
 
   const result = await arbox.getReport("birthdayReport", { fromDate: today, toDate: today, limit: 200 });
-  const people = (result.data || []).filter((p) => p.phone && p.allow_sms !== "no");
+
+  // Arbox's birthday report is not a list of members. It returns everyone it
+  // holds a birthday for - people who left a year ago, people who once left
+  // their details and never came. On the day this was measured, three of the
+  // four names in it were not training here, and all three would have received
+  // "mazal tov from all of us at TikTak" from a gym they do not attend.
+  //
+  // So it is crossed against the active-member list. A greeting is only warm if
+  // it comes from somewhere you actually belong to.
+  const members = await arbox.getAllActiveMembers();
+  const activePhones = new Set(
+    members.map((m) => String(m.phone || "").replace(/\D/g, "").slice(-9)).filter(Boolean)
+  );
+  const isActive = (phone) => activePhones.has(String(phone || "").replace(/\D/g, "").slice(-9));
+
+  const people = (result.data || []).filter(
+    (p) => p.phone && p.allow_sms !== "no" && isActive(p.phone)
+  );
 
   for (const person of people) {
     const template = BIRTHDAY_TEMPLATES[Math.floor(Math.random() * BIRTHDAY_TEMPLATES.length)];
