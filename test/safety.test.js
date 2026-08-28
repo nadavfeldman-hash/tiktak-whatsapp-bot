@@ -564,6 +564,33 @@ test("a suspiciously small attendance picture is not acted on", async () => {
   assert.ok(/0\.7|70/.test(check), "and a sharp drop must stop the run");
 });
 
+test("a message the fuse stopped is not marked sent", async () => {
+  // It used to be marked sent whatever had happened. So if twenty-five people
+  // qualified on the same day, twenty were written to and five vanished: dropped
+  // from the queue, recorded as delivered, never sent, and nothing anywhere said
+  // so. Nadav asked exactly this question - what happens to the ones over the
+  // limit - and the answer was worse than he feared.
+  reset();
+  clearOutbox();
+  store.setSetting("autoApproveAutomations", []);
+
+  const item = outbox.propose({ to: "972500000801", template: "birthday_1_v2", params: ["א"] });
+  outbox.approve([item.id]);
+
+  // Trip the fuse so the sender refuses.
+  for (let i = 0; i < fuse.MAX_PER_HOUR + 1; i++) {
+    await whatsapp.sendTemplate(`9725000009${String(i).padStart(2, "0")}`, "lost_lead_goodbye_v2", ["x"]);
+  }
+  assert.ok(fuse.isTripped(), "the fuse must be tripped for this test to mean anything");
+
+  await outbox.send();
+  assert.strictEqual(outbox.waitingToSend().length, 1, "the blocked message must still be waiting");
+
+  fuse.reset();
+  await outbox.send();
+  assert.strictEqual(outbox.waitingToSend().length, 0, "and go once the fuse is reset");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

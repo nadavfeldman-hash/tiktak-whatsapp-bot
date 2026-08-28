@@ -161,6 +161,13 @@ function pending() {
   return data.items.filter((i) => (i.status === "pending" || i.status === "held") && !isExpired(i));
 }
 
+// Approved but not yet gone. Normally this is empty for a second; if it is not,
+// something is stopping the queue - the fuse, or WhatsApp refusing - and that is
+// worth being able to see.
+function waitingToSend() {
+  return read().items.filter((i) => i.status === "approved" && !isExpired(i));
+}
+
 function history(limit = 60) {
   const data = read();
   return data.items
@@ -215,17 +222,43 @@ async function send() {
   for (const item of due) {
     // A held batch approved as a unit expands here into its individual messages.
     const messages = item.batch || [item];
+    let delivered = 0;
+    let blocked = false;
+
     for (const m of messages) {
       try {
         const res =
           m.kind === "text"
             ? await whatsapp.sendText(m.to, m.body)
             : await whatsapp.sendTemplate(m.to, m.template, m.params, { deliberate: true });
-        if (res) sent++;
+        if (res) {
+          sent++;
+          delivered++;
+        } else {
+          // The sender declined: the fuse has cut the power, or shadow mode is
+          // on. Neither means "never send this" - they mean "not now".
+          blocked = true;
+        }
         await new Promise((r) => setTimeout(r, 1200));
       } catch (e) {
+        blocked = true;
         console.error(`Outbox: failed to send to ${m.to}:`, e.message);
       }
+    }
+
+    // This used to say "sent" unconditionally, whatever had actually happened -
+    // so a message the fuse stopped, or one WhatsApp refused, was marked
+    // delivered and dropped from the queue. If twenty-five people qualified in a
+    // day, twenty were written to and five vanished in silence. Nothing in the
+    // system said so, and nobody would ever have found out.
+    //
+    // An item that did not go stays approved and is tried again next cycle. It
+    // still expires eventually, so nothing chases forever.
+    if (blocked && delivered === 0) {
+      item.lastAttemptAt = new Date().toISOString();
+      item.attempts = (item.attempts || 0) + 1;
+      console.log(`Outbox: ${item.to} not sent yet (attempt ${item.attempts}) - staying in the queue.`);
+      continue;
     }
     item.status = "sent";
     item.sentAt = new Date().toISOString();
@@ -235,7 +268,15 @@ async function send() {
   // sending, and that proposal must not be lost.
   const fresh = read();
   const byId = new Map(data.items.map((i) => [i.id, i]));
-  fresh.items = fresh.items.map((i) => (byId.get(i.id)?.status === "sent" ? byId.get(i.id) : i));
+  fresh.items = fresh.items.map((i) => {
+    const after = byId.get(i.id);
+    // Carry back both outcomes: the ones that went, and the attempt count on the
+    // ones that did not, so a stuck message is visible rather than merely quiet.
+    if (!after) return i;
+    if (after.status === "sent") return after;
+    if (after.attempts) return { ...i, attempts: after.attempts, lastAttemptAt: after.lastAttemptAt };
+    return i;
+  });
   write(fresh);
 
   return { sent };
@@ -258,6 +299,7 @@ function sweep() {
 function counts() {
   const p = pending();
   return {
+    waitingToSend: waitingToSend().length,
     pending: p.filter((i) => i.status === "pending").length,
     held: p.filter((i) => i.status === "held").length,
     heldMessages: p.filter((i) => i.status === "held").reduce((s, i) => s + (i.heldCount || 0), 0),
@@ -266,6 +308,7 @@ function counts() {
 
 module.exports = {
   propose,
+  waitingToSend,
   proposeBatch,
   pending,
   history,
