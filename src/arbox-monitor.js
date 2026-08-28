@@ -243,7 +243,7 @@ async function checkNewLeads() {
     return t && t > max ? t : max;
   }, since);
 
-  store.setArboxState({ ...state, lastLeadCheckTime: latestTime.toISOString() });
+  store.setArboxState({ lastLeadCheckTime: latestTime.toISOString() });
 }
 
 const DEBT_REPORT_HOUR = 9; // sends once, the first time the monitor runs at/after this local hour each day
@@ -270,7 +270,7 @@ async function checkDebtReport() {
   const message = formatDebtReport(result.data || []);
   await whatsapp.sendText(ADMIN_PHONE, message);
 
-  store.setArboxState({ ...state, lastDebtReportDate: today });
+  store.setArboxState({ lastDebtReportDate: today });
 }
 
 const ATTENDANCE_REPORT_HOUR = 21; // sent once, the first time the monitor runs at/after this local hour each day
@@ -301,7 +301,7 @@ async function checkAttendanceReport() {
   const message = `📋 דוח נוכחות יומי (${today}):\n${totalRegistrations} הרשמות לאימונים, פרוסות על ${sessionsWithPeople} שיעורים.`;
   await whatsapp.sendText(ADMIN_PHONE, message);
 
-  store.setArboxState({ ...state, lastAttendanceReportDate: today });
+  store.setArboxState({ lastAttendanceReportDate: today });
 }
 
 function formatTaskAlert(task) {
@@ -343,7 +343,7 @@ async function checkDueTasks() {
   }
 
   if (dueTasks.length > 0) {
-    store.setArboxState({ ...state, sentTaskReminderIds: Array.from(sentIds) });
+    store.setArboxState({ sentTaskReminderIds: Array.from(sentIds) });
   }
 }
 
@@ -376,7 +376,7 @@ async function checkBirthdays() {
     await sleep(PACE_MS);
   }
 
-  store.setArboxState({ ...state, lastBirthdayCheckDate: today });
+  store.setArboxState({ lastBirthdayCheckDate: today });
 }
 
 async function checkFailedPayments() {
@@ -417,7 +417,7 @@ async function checkFailedPayments() {
   }
 
   if (seenThisRun.size > 0) {
-    store.setArboxState({ ...state, notifiedFailedPaymentKeys: Array.from(notifiedKeys) });
+    store.setArboxState({ notifiedFailedPaymentKeys: Array.from(notifiedKeys) });
   }
 }
 
@@ -454,7 +454,7 @@ async function checkNewMembers() {
     welcomed.add(String(c.user_id));
   }
 
-  store.setArboxState({ ...state, welcomedUserIds: Array.from(welcomed) });
+  store.setArboxState({ welcomedUserIds: Array.from(welcomed) });
 }
 
 async function checkLostLeads() {
@@ -491,7 +491,7 @@ async function checkLostLeads() {
     saidGoodbye.add(String(c.user_id));
   }
 
-  store.setArboxState({ ...state, saidGoodbyeUserIds: Array.from(saidGoodbye) });
+  store.setArboxState({ saidGoodbyeUserIds: Array.from(saidGoodbye) });
 }
 
 function isTrialRegistration(reg) {
@@ -580,7 +580,7 @@ async function checkTrialBookings() {
     console.log(`Trial bookings: starting from now - ${unseen.length} already booked, recorded in silence.`);
   }
   if (changed) {
-    store.setArboxState({ ...state, confirmedTrialKeys: Array.from(confirmed) });
+    store.setArboxState({ confirmedTrialKeys: Array.from(confirmed) });
   }
 }
 
@@ -623,7 +623,7 @@ async function checkTrialReminders() {
   await sendFor(fmt(today), "same_day", TRIAL_REMINDER_SAME_DAY_HOUR);
 
   if (changed) {
-    store.setArboxState({ ...state, sentTrialReminderKeys: Array.from(sentKeys) });
+    store.setArboxState({ sentTrialReminderKeys: Array.from(sentKeys) });
   }
 }
 
@@ -778,7 +778,6 @@ async function checkAbsences() {
       for (let s = 0; s <= d.stage; s++) notifiedKeys.add(`${d.id}:${s}`);
     }
     store.setArboxState({
-      ...state,
       notifiedAbsenceKeys: Array.from(notifiedKeys),
       absenceAttendanceStarted: new Date().toISOString(),
     });
@@ -804,7 +803,7 @@ async function checkAbsences() {
   }
 
   if (changed) {
-    store.setArboxState({ ...state, notifiedAbsenceKeys: Array.from(notifiedKeys) });
+    store.setArboxState({ notifiedAbsenceKeys: Array.from(notifiedKeys) });
   }
 }
 
@@ -878,7 +877,6 @@ async function checkLeadNoResponse() {
   // The snapshot is saved every cycle, whether or not anything was sent, so the
   // next cycle has something to compare against.
   store.setArboxState({
-    ...state,
     notifiedLeadNoResponseKeys: changed ? Array.from(notifiedKeys) : state.notifiedLeadNoResponseKeys,
     leadStatusSnapshot: currentStatuses,
   });
@@ -936,7 +934,7 @@ async function checkAttendanceTrends() {
   // week later, as a weekly summary should.
   if (!lastRun) {
     console.log("Attendance trends: first run - recording the date and staying silent this week.");
-    store.setArboxState({ ...state, lastAttendanceTrendCheckDate: now.toISOString() });
+    store.setArboxState({ lastAttendanceTrendCheckDate: now.toISOString() });
     return;
   }
 
@@ -988,7 +986,7 @@ async function checkAttendanceTrends() {
     await sleep(PACE_MS);
   }
 
-  store.setArboxState({ ...state, lastAttendanceTrendCheckDate: now.toISOString() });
+  store.setArboxState({ lastAttendanceTrendCheckDate: now.toISOString() });
 }
 
 const COACH_TRIAL_NOTICE_HOUR = 19; // evening before, once per day
@@ -1018,7 +1016,7 @@ async function checkCoachTrialNotices() {
     await sleep(PACE_MS);
   }
 
-  store.setArboxState({ ...state, lastCoachTrialNoticeDate: today });
+  store.setArboxState({ lastCoachTrialNoticeDate: today });
 }
 
 // Detects when a session's assigned coach changes from what we last saw, by
@@ -1076,7 +1074,7 @@ async function checkCoachReplacements() {
     }
   }
 
-  store.setArboxState({ ...state, coachScheduleSnapshot: newSnapshot });
+  store.setArboxState({ coachScheduleSnapshot: newSnapshot });
 }
 
 // There is no waiting list here - a new workout starts every 10 minutes, so a
@@ -1149,7 +1147,7 @@ async function checkLateCancellations() {
   }
 
   if (changed) {
-    store.setArboxState({ ...state, notifiedLateCancellationKeys: Array.from(notifiedKeys) });
+    store.setArboxState({ notifiedLateCancellationKeys: Array.from(notifiedKeys) });
   }
 }
 
@@ -1196,7 +1194,7 @@ async function checkStreaks() {
     }
   }
 
-  store.setArboxState({ ...state, userStreaks: streaks, lastStreakCheckDate: now.toISOString() });
+  store.setArboxState({ userStreaks: streaks, lastStreakCheckDate: now.toISOString() });
 }
 
 // Checks in with newer members a couple of times during their first two
@@ -1236,7 +1234,6 @@ async function checkNewMemberCheckins() {
   }
 
   store.setArboxState({
-    ...state,
     lastNewMemberCheckinDate: today,
     sentNewMemberCheckinKeys: changed ? Array.from(sentKeys) : state.sentNewMemberCheckinKeys,
   });

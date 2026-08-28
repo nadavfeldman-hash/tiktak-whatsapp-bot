@@ -332,6 +332,40 @@ test("every reply to a customer goes through the one guarded function", async ()
   assert.ok(guarded, "and that one must check the switch before queueing");
 });
 
+test("no check writes back a stale copy of the whole state", async () => {
+  // Seventeen checks read the state and then wrote it all back with one key
+  // changed. Every one of them was therefore capable of reverting whatever the
+  // others had recorded in between - and once three of them moved to
+  // ten-second loops, that happened constantly: the daily debt report's "sent
+  // today" mark was wiped seconds after it was written, so it sent again on the
+  // next cycle, and Nadav got the same report every two minutes all morning.
+  //
+  // It is also what once erased 230 people's protection against being messaged
+  // twice. That time only the one check was fixed, not the pattern.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const stale = src.match(/setArboxState\(\{\s*\.\.\.state/g) || [];
+  assert.strictEqual(
+    stale.length,
+    0,
+    `${stale.length} checks write back their own stale snapshot; each must write only the keys it changed`
+  );
+});
+
+test("one check's write cannot revert another's", async () => {
+  reset();
+  const before = store.getArboxState();
+  // A slow check reads here...
+  const staleRead = { ...before };
+  // ...a fast one records something in the meantime...
+  store.setArboxState({ lastDebtReportDate: "2026-08-28" });
+  // ...and the slow one finally writes its own key.
+  store.setArboxState({ lastBirthdayCheckDate: "2026-08-28" });
+  const after = store.getArboxState();
+  assert.strictEqual(after.lastDebtReportDate, "2026-08-28", "the earlier write must survive");
+  assert.strictEqual(after.lastBirthdayCheckDate, "2026-08-28", "and so must the later one");
+  assert.ok(staleRead !== after, "the snapshot itself is never written back");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();
