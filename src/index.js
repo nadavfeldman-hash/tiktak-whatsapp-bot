@@ -234,15 +234,13 @@ app.post("/webhook", async (req, res) => {
     //
     // Once the answers have proved themselves this can be relaxed. Until then
     // the rule is the rule, with no exception anywhere in the code.
-    require("./outbox").propose({
-      to: incoming.from,
-      kind: "text",
-      body: reply,
-      automation: "תשובה בשיחה",
-      personName: incoming.from,
-      incoming: incoming.text,
-    });
-    console.log(`Reply to ${incoming.from} queued for approval, not sent.`);
+    // Through queueReply, not straight to the queue. This call was written first
+    // and queueReply added afterwards for the smaller replies, which left two
+    // paths where there should be one - and only the newer of them checked
+    // whether answering in chat was switched on at all. Reconnecting the webhook
+    // then poured four hundred and thirty-one replies into the queue from an
+    // automation that was off, because this line never asked.
+    queueReply(incoming.from, reply, incoming.text);
   } catch (err) {
     console.error("Error handling webhook event:", err);
     // Never leave the customer hanging with silence - always send something back,

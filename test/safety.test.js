@@ -313,6 +313,25 @@ test("a check already running is skipped, not run twice", async () => {
   assert.strictEqual(peak, 1, "two copies of one check must never overlap");
 });
 
+test("every reply to a customer goes through the one guarded function", async () => {
+  // There were two paths into the queue from the conversation: queueReply, which
+  // checks whether answering in chat is switched on, and one older call that
+  // went straight to outbox.propose and never asked. Reconnecting the webhook
+  // poured 431 replies into the queue from an automation that was off.
+  //
+  // Counting the call sites is the whole test: one guarded function, and nothing
+  // else in this file talking to the queue directly.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "index.js"), "utf8");
+  const direct = src.match(/outbox"\)\.propose\(/g) || [];
+  assert.strictEqual(
+    direct.length,
+    1,
+    `${direct.length} places queue a reply; there must be exactly one, inside queueReply`
+  );
+  const guarded = /function queueReply[\s\S]{0,400}?automationOn/.test(src);
+  assert.ok(guarded, "and that one must check the switch before queueing");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();
