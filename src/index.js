@@ -80,6 +80,17 @@ app.get("/status", (req, res) => {
     fuse: require("./fuse").status(),
     // What actually reached a phone, as WhatsApp reports it back.
     delivery: (store.getArboxState().deliveryStatus || []).slice(-40),
+    // What the queue has done recently, not just how much is in it. Twice now
+    // the queue has jumped and the only way to find out why was to look at it
+    // before deciding what to do - and the safe thing to do is clear it, which
+    // destroys the evidence. Kept so both are possible.
+    outboxRecent: require("./outbox").history(60).map((i) => ({
+      at: i.proposedAt,
+      status: i.status,
+      automation: i.automation,
+      to: i.to,
+      name: i.personName,
+    })),
     // How many messages are waiting for Nadav. Nothing here has been sent.
     awaitingApproval: require("./outbox").counts(),
     shadowMode: require("./whatsapp").shadowMode(),
