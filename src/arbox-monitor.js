@@ -46,6 +46,28 @@ function queueMessage(to, template, params = [], options = {}) {
     return null;
   }
 
+  // The first complete run after an automation is switched on never sends.
+  //
+  // Whatever it finds on that run is written down as handled, in silence, and
+  // only from the second run onwards does anybody hear from us. This is not a
+  // precaution that has to be remembered - switching on is safe by itself.
+  //
+  // It exists because the alternative was me checking. Twice I ran the check
+  // against a fresh local copy, watched it record everything silently, told
+  // Nadav it was safe, and switched it on - and a fresh copy is a different
+  // system from one that has been running for days. The second time it wrote to
+  // fourteen people who had done nothing but miss a week of training.
+  if (!silentRunDone(label)) {
+    events.decision({
+      automation: label,
+      person: who,
+      phone: to,
+      outcome: "לא נשלח",
+      reason: "סבב ראשון אחרי הדלקה - נרשם בשקט",
+    });
+    return null;
+  }
+
   const phone = usablePhone(to);
   if (!phone) {
     events.decision({ automation: label, person: who, phone: to, outcome: "לא נשלח", reason: "מספר טלפון לא תקין" });
@@ -179,6 +201,31 @@ function automationOn(label) {
 // were swallowed exactly that way.
 function watching(label) {
   return automationOn(label);
+}
+
+// Has this automation already completed one full run since it was switched on?
+//
+// Until it has, everything it decides is recorded and nothing is sent. The flag
+// is cleared whenever an automation is turned on, so switching something on is
+// safe on its own terms - not because somebody checked first.
+function silentRunDone(label) {
+  const done = store.getArboxState().silentRunDone || {};
+  return Boolean(done[label]);
+}
+
+function markSilentRunDone(label) {
+  const done = store.getArboxState().silentRunDone || {};
+  if (done[label]) return;
+  done[label] = new Date().toISOString();
+  store.setArboxState({ silentRunDone: done });
+  console.log(`"${label}" has completed its silent first run - it may send from now on.`);
+}
+
+// Called when an automation is switched on, so its next run is silent again.
+function armSilentRun(label) {
+  const done = store.getArboxState().silentRunDone || {};
+  delete done[label];
+  store.setArboxState({ silentRunDone: done });
 }
 
 // The first word, and only when there is clearly more than one.
@@ -1561,6 +1608,10 @@ function startMonitoring(tickMs = TICK_MS) {
         try {
           await job.run();
           lastRun[job.name] = { ok: true, at: new Date().toISOString() };
+          // One complete run without error is what earns the right to send.
+          // A run that threw does not count: it may have stopped halfway,
+          // having seen only part of what is out there.
+          if (automationOn(job.name)) markSilentRunDone(job.name);
         } catch (e) {
           // Errors used to disappear into a .catch that printed to a console
           // nobody reads, so a dead automation looked exactly like a quiet one.
@@ -1585,6 +1636,8 @@ function startMonitoring(tickMs = TICK_MS) {
 
 module.exports = {
   lastRun,
+  armSilentRun,
+  silentRunDone,
   optedOut,
   refreshOptOuts,
   once,

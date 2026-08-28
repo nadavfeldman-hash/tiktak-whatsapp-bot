@@ -303,6 +303,10 @@ router.post("/toggle-automation", express.urlencoded({ extended: false }), requi
   const enabled = store.getSettings().enabledAutomations || [];
   const next = enabled.includes(name) ? enabled.filter((x) => x !== name) : enabled.concat(name);
   store.setSetting("enabledAutomations", next);
+  // Switching on re-arms the silent first run, so the automation records what it
+  // finds and sends nothing until it has been round once. Switching on is safe
+  // by itself; it does not depend on anyone having checked first.
+  if (next.includes(name)) require("./arbox-monitor").armSilentRun(name);
   console.log(`Automation "${name}" is now ${next.includes(name) ? "ON" : "OFF"}.`);
   res.redirect("/admin/dashboard#automations");
 });

@@ -591,6 +591,36 @@ test("a message the fuse stopped is not marked sent", async () => {
   assert.strictEqual(outbox.waitingToSend().length, 0, "and go once the fuse is reset");
 });
 
+test("switching an automation on is safe by itself", async () => {
+  // Twice I ran a check against a fresh local copy, watched it record everything
+  // in silence, told Nadav it was safe, and switched it on. A fresh copy is a
+  // different system from one that has been running for days: the second time,
+  // fourteen people who had done nothing but miss a week of training were
+  // written to within seconds of the switch.
+  //
+  // So the safety cannot live in the checking. The first complete run after an
+  // automation is switched on sends nothing, whatever state it finds, whether or
+  // not anybody looked first.
+  const monitor = require("../src/arbox-monitor");
+  assert.strictEqual(typeof monitor.armSilentRun, "function");
+  assert.strictEqual(typeof monitor.silentRunDone, "function");
+
+  monitor.armSilentRun("נעדר מהאימונים");
+  assert.strictEqual(
+    monitor.silentRunDone("נעדר מהאימונים"),
+    false,
+    "immediately after switching on, the automation has not earned the right to send"
+  );
+
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const fnStart = src.indexOf("function queueMessage");
+  const fn = src.slice(fnStart, src.indexOf("\n}", fnStart));
+  assert.ok(fn.includes("silentRunDone("), "and every message must pass that check");
+
+  const admin = fs.readFileSync(path.join(__dirname, "..", "src", "admin.js"), "utf8");
+  assert.ok(admin.includes("armSilentRun"), "turning it on must re-arm the silence");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();
