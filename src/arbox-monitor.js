@@ -3,6 +3,7 @@ const whatsapp = require("./whatsapp");
 const store = require("./store");
 
 const outbox = require("./outbox");
+const events = require("./events");
 const TEMPLATES = require("../templates.json");
 
 const ADMIN_PHONE = process.env.ADMIN_PHONE;
@@ -28,26 +29,57 @@ function queueMessage(to, template, params = [], options = {}) {
   // Normalised here, in the one place every proposal passes through, so no
   // check can get it wrong again.
   const label = TEMPLATE_LABELS[template] || template;
+  // Forty of the fifty-four leads in Arbox have their surname typed into the
+  // first-name box - "חגית מייזליק", "Ben Rozenberg" - so three quarters of
+  // these messages opened with a full name. The whole point of them is that they
+  // read as Nadav writing personally, and nobody who knows you opens with your
+  // surname. Trimmed here, where every message passes.
+  params = params.map((p, i) => (i === 0 ? firstNameOnly(p) : p));
+  const who = params[0] || "";
+
+  // Every outcome below is written to the event log, including the ones that
+  // lead nowhere. A message that went out can be seen on the phone; one that did
+  // not was previously visible nowhere at all, which is why "why didn't they get
+  // it?" could only ever be answered with a guess.
   if (!automationOn(label)) {
-    console.log(`Automation "${label}" is off - not queueing ${template}.`);
+    events.decision({ automation: label, person: who, phone: to, outcome: "לא נשלח", reason: "האוטומציה כבויה" });
     return null;
   }
 
   const phone = usablePhone(to);
   if (!phone) {
-    console.log(`Skipping ${template}: unusable phone number ${to}`);
+    events.decision({ automation: label, person: who, phone: to, outcome: "לא נשלח", reason: "מספר טלפון לא תקין" });
     return null;
   }
 
-  return outbox.propose({
+  const queued = outbox.propose({
     to: phone,
     template,
     params,
     automation: label,
-    personName: params[0] || "",
+    personName: who,
     reason: options.reason || "",
     preview: renderTemplate(template, params),
   });
+
+  if (!queued) {
+    events.decision({
+      automation: label,
+      person: who,
+      phone,
+      outcome: "לא נשלח",
+      reason: "כבר נשלח או כבר ממתין",
+    });
+    return null;
+  }
+
+  events.decision({
+    automation: label,
+    person: who,
+    phone,
+    outcome: queued.status === "approved" ? "ממתין לשליחה" : "ממתין לאישור שלך",
+  });
+  return queued;
 }
 
 // What the person will actually read, blanks filled in - so approving is a
@@ -137,6 +169,19 @@ function automationOn(label) {
 // were swallowed exactly that way.
 function watching(label) {
   return automationOn(label);
+}
+
+// The first word, and only when there is clearly more than one.
+//
+// Deliberately not clever: no attempt to guess which part is the given name, no
+// list of particles. If somebody is stored as one word they keep it, and if a
+// business is stored as a name the first word is still a reasonable thing to
+// greet. Getting this wrong in the other direction - inventing a name - is far
+// worse than leaving one long.
+function firstNameOnly(value) {
+  const name = String(value ?? "").trim();
+  if (!name.includes(" ")) return name;
+  return name.split(/\s+/)[0];
 }
 
 // Small pause between messages in any loop that could message many different
@@ -1301,82 +1346,88 @@ function once(name, fn) {
   };
 }
 
-function startMonitoring(intervalMs = 2 * 60 * 1000) {
-  const runAll = () => {
-    // checkLeadNoResponse, checkNewLeads and checkLostLeads are deliberately
-    // absent here. They run on the short loops below instead, and leaving them
-    // in both places meant two copies of the same check running at the same
-    // moment: both read the state, both decided the same person qualified, and
-    // both sent before either had recorded anything. Four people were written to
-    // twice within an hour of it going live. One check, one loop.
-    checkDebtReport().catch((e) => console.error("Arbox monitor (debt) error:", e.message));
-    checkAttendanceReport().catch((e) => console.error("Arbox monitor (attendance) error:", e.message));
-    checkDueTasks().catch((e) => console.error("Arbox monitor (tasks) error:", e.message));
-    checkBirthdays().catch((e) => console.error("Arbox monitor (birthdays) error:", e.message));
-    checkFailedPayments().catch((e) => console.error("Arbox monitor (failed payments) error:", e.message));
-    checkNewMembers().catch((e) => console.error("Arbox monitor (new members) error:", e.message));
-    checkTrialBookings().catch((e) => console.error("Arbox monitor (trial bookings) error:", e.message));
-    checkTrialReminders().catch((e) => console.error("Arbox monitor (trial reminders) error:", e.message));
-    checkAbsences().catch((e) => console.error("Arbox monitor (absences) error:", e.message));
-    checkCoachTrialNotices().catch((e) => console.error("Arbox monitor (coach notices) error:", e.message));
-    checkCoachReplacements().catch((e) => console.error("Arbox monitor (coach replacements) error:", e.message));
-    checkAttendanceTrends().catch((e) => console.error("Arbox monitor (attendance trends) error:", e.message));
-    checkLateCancellations().catch((e) => console.error("Arbox monitor (late cancellations) error:", e.message));
-    checkStreaks().catch((e) => console.error("Arbox monitor (streaks) error:", e.message));
-    checkNewMemberCheckins().catch((e) => console.error("Arbox monitor (new member checkins) error:", e.message));
+// One loop. Everything in it, one after another, never two at once.
+//
+// There were three timers and seventeen checks, and the checks overlapped
+// freely. Every incident of the last two days came out of that: two copies of
+// one check both deciding the same person qualified and both sending; one check
+// writing back a stale copy of the state and reverting what another had just
+// recorded, so the daily debt report re-sent itself every two minutes all
+// morning. Guards cannot fix this - they compare against what has been written
+// down, and with concurrent writers there is no reliable "what has been written
+// down".
+//
+// So there is one timer. It ticks every ten seconds and works through a list in
+// order, awaiting each one. Two checks can no longer run at the same moment
+// because there is only ever one running.
+//
+// Frequency is expressed as "every Nth tick" rather than as another timer.
+// Things Nadav does by hand and then watches for run on every tick; things that
+// read hundreds of records run rarely, because asking Arbox for three pages
+// every ten seconds is rude and pointless.
+const TICK_MS = 10 * 1000;
+const SCHEDULE = [
+  // Nadav sets a status and looks at his phone. This is the one that must feel
+  // instant.
+  { name: "שינוי סטטוס ליד", every: 1, run: checkLeadNoResponse },
+  { name: "ליד חדש", every: 1, run: checkNewLeads },
+  // Three pages of records; every third tick is still half a minute.
+  { name: "ליד אבוד", every: 3, run: checkLostLeads },
+  { name: "מצטרף חדש", every: 6, run: checkNewMembers },
+  // Reads a month of sessions - expensive, and absence is measured in days.
+  { name: "נעדר מהאימונים", every: 30, run: checkAbsences },
+  { name: "נרשם לאימון ניסיון", every: 12, run: checkTrialBookings },
+  { name: "תזכורת אימון ניסיון", every: 12, run: checkTrialReminders },
+  { name: "יום הולדת", every: 30, run: checkBirthdays },
+  { name: "ביטול בלי הרשמה מחדש", every: 12, run: checkLateCancellations },
+  { name: "צ׳ק-אין מצטרף חדש", every: 30, run: checkNewMemberCheckins },
+  { name: "רצף אימונים", every: 60, run: checkStreaks },
+  { name: "עדכון למאמן", every: 30, run: checkCoachTrialNotices },
+  { name: "החלפת מאמן", every: 30, run: checkCoachReplacements },
+  { name: "מגמות נוכחות", every: 60, run: checkAttendanceTrends },
+  { name: "תשלום שנכשל", every: 30, run: checkFailedPayments },
+  // Reports to Nadav himself, not to customers.
+  { name: "דוח חובות", every: 30, run: checkDebtReport },
+  { name: "דוח נוכחות", every: 30, run: checkAttendanceReport },
+  { name: "תזכורות משימות", every: 30, run: checkDueTasks },
+];
 
-    // Nothing above this line sends anything any more - they all propose. This
-    // is the only place a customer is written to, and it sends strictly what
-    // Nadav has approved in the panel and nothing else.
-    outbox.sweep();
-    outbox.send().catch((e) => console.error("Outbox send error:", e.message));
+function startMonitoring(tickMs = TICK_MS) {
+  let tick = 0;
+  let busy = false;
+
+  const runTick = async () => {
+    // Belt and braces on top of the single timer: if a tick somehow runs long,
+    // the next one waits rather than starting a second pass through the list.
+    if (busy) return;
+    busy = true;
+    tick++;
+    try {
+      for (const job of SCHEDULE) {
+        if (tick % job.every !== 0) continue;
+        try {
+          await job.run();
+          lastRun[job.name] = { ok: true, at: new Date().toISOString() };
+        } catch (e) {
+          // Errors used to disappear into a .catch that printed to a console
+          // nobody reads, so a dead automation looked exactly like a quiet one.
+          lastRun[job.name] = { ok: false, error: e.message, at: new Date().toISOString() };
+          events.failure(job.name, e.message);
+        }
+      }
+
+      // The only place a customer is written to, and it sends strictly what has
+      // been approved - by Nadav in the panel, or in advance for the automations
+      // he has said may go on their own.
+      outbox.sweep();
+      await outbox.send();
+    } finally {
+      busy = false;
+    }
   };
-  runAll();
-  setInterval(runAll, intervalMs);
 
-  // A status Nadav sets by hand is the one thing here that happens while
-  // somebody is watching: he moves a lead to "no answer" and then looks at his
-  // phone to see whether it worked. Two minutes of nothing reads as broken, and
-  // he checked and reported it as broken within that window. So this one check
-  // runs on its own short loop rather than waiting for the main cycle.
-  //
-  // It is the cheapest of the checks - one report, no pagination - but ten
-  // seconds is still six calls a minute, so a failure backs off rather than
-  // hammering Arbox until it blocks us.
-  let backoffUntil = 0;
-  setInterval(async () => {
-    if (Date.now() < backoffUntil) return;
-    try {
-      await once("leadNoResponse", checkLeadNoResponse)();
-      // A new lead is the other thing that cannot wait. Somebody left their
-      // details and is deciding right now whether this place is worth their
-      // time; one who arrived at nine in the evening sat unanswered until the
-      // morning because this ran on the slow cycle. It is a single request with
-      // no pagination, so it is cheap enough to ask often.
-      await once("newLeads", checkNewLeads)();
-      await outbox.send();
-    } catch (e) {
-      backoffUntil = Date.now() + 60 * 1000;
-      console.error("Fast lead check failed, pausing a minute:", e.message);
-    }
-  }, 10 * 1000);
-
-  // Lost leads sit on their own slower loop. Marking one lost is also something
-  // Nadav does by hand and then watches for, but the list is five hundred
-  // records across three pages - asking every ten seconds would be eighteen
-  // requests a minute at Arbox for a thing that happens a few times a day.
-  // Thirty seconds is still immediate to a person and a sixth of the traffic.
-  let lostBackoff = 0;
-  setInterval(async () => {
-    if (Date.now() < lostBackoff) return;
-    try {
-      await once("lostLeads", checkLostLeads)();
-      await outbox.send();
-    } catch (e) {
-      lostBackoff = Date.now() + 2 * 60 * 1000;
-      console.error("Lost-lead check failed, pausing two minutes:", e.message);
-    }
-  }, 30 * 1000);
+  runTick();
+  setInterval(runTick, tickMs);
 }
 
 module.exports = {

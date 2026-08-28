@@ -366,6 +366,43 @@ test("one check's write cannot revert another's", async () => {
   assert.ok(staleRead !== after, "the snapshot itself is never written back");
 });
 
+test("only one thing runs at a time, and there is only one timer", async () => {
+  // Three timers and seventeen checks that overlapped freely was the shape
+  // behind every incident of the last two days. One timer, one list, awaited in
+  // order - so two checks cannot be inside the same state at the same moment.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const wiring = src.slice(src.indexOf("function startMonitoring"));
+  const timers = wiring.match(/setInterval\(/g) || [];
+  assert.strictEqual(timers.length, 1, `${timers.length} timers in the scheduler; there must be exactly one`);
+  assert.ok(wiring.includes("for (const job of SCHEDULE)"), "the checks must run through one ordered list");
+  assert.ok(wiring.includes("await job.run()"), "and each must be awaited before the next starts");
+});
+
+test("a message greets someone by their first name only", async () => {
+  // Forty of fifty-four leads have their surname in the first-name field, so
+  // three quarters of these opened "היי חגית מייזליק" - which reads as a mailing
+  // list, and the entire point of them is that they do not.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const start = src.indexOf("function firstNameOnly");
+  const fn = src.slice(start, src.indexOf("\n}", start) + 2);
+  const firstNameOnly = eval("(" + fn.replace("function firstNameOnly", "function") + ")");
+  assert.strictEqual(firstNameOnly("חגית מייזליק"), "חגית");
+  assert.strictEqual(firstNameOnly("Ben Rozenberg"), "Ben");
+  assert.strictEqual(firstNameOnly("elinorsimbol"), "elinorsimbol", "one word stays whole");
+  assert.strictEqual(firstNameOnly(""), "", "and nothing stays nothing");
+});
+
+test("a decision that leads to no message is still written down", async () => {
+  // The failures are the ones worth recording: a message that went out is
+  // visible on the phone, and one that did not was visible nowhere at all.
+  const events = require("../src/events");
+  events.decision({ automation: "ליד אבוד", person: "יוסי", phone: "972500000900", outcome: "לא נשלח", reason: "האוטומציה כבויה" });
+  events.failure("נעדר מהאימונים", "Arbox API error 500");
+  const notSent = events.notSent(10);
+  assert.ok(notSent.some((e) => e.reason === "האוטומציה כבויה"), "a blocked decision must be readable");
+  assert.ok(notSent.some((e) => e.kind === "failure"), "and so must a crash");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

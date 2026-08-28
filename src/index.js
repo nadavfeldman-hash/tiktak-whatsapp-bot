@@ -91,6 +91,9 @@ app.get("/status", (req, res) => {
       to: i.to,
       name: i.personName,
     })),
+    // Every decision and every failure, newest first - including the ones that
+    // led to no message at all, which are the ones worth reading.
+    events: require("./events").recent(60),
     // How many messages are waiting for Nadav. Nothing here has been sent.
     awaitingApproval: require("./outbox").counts(),
     shadowMode: require("./whatsapp").shadowMode(),

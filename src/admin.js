@@ -553,6 +553,7 @@ router.get("/dashboard", requireAuth, async (req, res) => {
   const shadowOn = require("./whatsapp").shadowMode();
   const fuseInfo = require("./fuse").status();
   const pendingItems = require("./outbox").pending();
+  const recentEvents = require("./events").recent(40);
   const monitor = require("./arbox-monitor");
   const autoList = store.getSettings().autoApproveAutomations || [];
   const automationList = monitor.ALL_AUTOMATIONS.map((name) => ({
@@ -712,6 +713,25 @@ router.get("/dashboard", requireAuth, async (req, res) => {
                 <div style="margin-top:10px;"><button class="btn-primary" type="submit">שמור עדכון חדש</button></div>
               </form>
             </div>
+          </div>
+        </div>
+
+        <div class="section" id="events">
+          <div class="section-header"><div class="section-title">📋 מה קרה לאחרונה</div></div>
+          <div class="card card-pad">
+            <div class="toggle-desc" style="max-width:none;margin-bottom:10px;">
+              כל החלטה של המערכת, כולל אלה שלא הסתיימו בהודעה. כאן רואים למה מישהו לא קיבל.
+            </div>
+            ${recentEvents.length === 0
+              ? `<div style="color:#7a7a7a;">עוד לא קרה כלום.</div>`
+              : `<table><thead><tr><th>מתי</th><th>אוטומציה</th><th>מי</th><th>מה קרה</th></tr></thead><tbody>` +
+                recentEvents.map((e) => {
+                  const when = new Date(e.at).toLocaleString("he-IL", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+                  if (e.kind === "failure")
+                    return `<tr><td class="mono">${when}</td><td>${esc(e.automation)}</td><td>—</td><td><span class="badge off">שגיאה</span> <span class="muted">${esc(e.reason)}</span></td></tr>`;
+                  const ok = e.outcome !== "לא נשלח";
+                  return `<tr><td class="mono">${when}</td><td>${esc(e.automation)}</td><td>${esc(e.person || e.phone || "")}</td><td><span class="badge ${ok ? "on" : "neutral"}">${esc(e.outcome)}</span>${e.reason ? ` <span class="muted">${esc(e.reason)}</span>` : ""}</td></tr>`;
+                }).join("") + `</tbody></table>`}
           </div>
         </div>
 
