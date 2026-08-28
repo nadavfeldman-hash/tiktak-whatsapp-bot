@@ -403,6 +403,63 @@ test("a decision that leads to no message is still written down", async () => {
   assert.ok(notSent.some((e) => e.kind === "failure"), "and so must a crash");
 });
 
+test("the rehearsal runs before the automations are allowed to", async () => {
+  // The rehearsal was written the day after 46 people were messaged by mistake,
+  // and then never connected - so for a day it was a safeguard that existed only
+  // in the repository. It has to run on start, which is to say after every
+  // deploy, which is the moment the risk actually exists.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "index.js"), "utf8");
+  assert.ok(src.includes('require("./canary")'), "the rehearsal must be wired into startup");
+  const order = src.indexOf("rehearseAndArm");
+  const start = src.indexOf("startMonitoring", order);
+  assert.ok(order > 0 && start > order, "and it must come before monitoring starts");
+});
+
+test("a rehearsal that cannot run does not count as permission", async () => {
+  const canary = require("../src/canary");
+  assert.strictEqual(typeof canary.rehearseAndArm, "function");
+  assert.ok(canary.IMPLAUSIBLE > 0, "there must be a number above which it refuses");
+});
+
+test("an automation that has gone quiet is noticed", async () => {
+  // The absence reminders read the wrong report from the day they were written
+  // and could never have fired. Nothing said so, because a broken automation and
+  // a quiet one look identical from outside.
+  const watchdog = require("../src/watchdog");
+  store.setSetting("enabledAutomations", ["נעדר מהאימונים"]);
+  const monitor = { lastRun: {} };
+  const silent = watchdog.silentAutomations(monitor);
+  assert.ok(
+    silent.some((s) => s.name === "נעדר מהאימונים"),
+    "an enabled automation that has never run must be reported"
+  );
+
+  monitor.lastRun["נעדר מהאימונים"] = { ok: true, at: new Date().toISOString() };
+  assert.strictEqual(watchdog.silentAutomations(monitor).length, 0, "and one that just ran must not be");
+  store.setSetting("enabledAutomations", []);
+});
+
+test("an automation nobody switched on is not reported as broken", async () => {
+  // Warning about things that are off by choice is how people learn to ignore
+  // warnings.
+  const watchdog = require("../src/watchdog");
+  store.setSetting("enabledAutomations", []);
+  assert.strictEqual(watchdog.silentAutomations({ lastRun: {} }).length, 0);
+});
+
+test("a message that never arrived is surfaced, not just stored", async () => {
+  const watchdog = require("../src/watchdog");
+  store.setArboxState({
+    deliveryStatus: [
+      { at: new Date().toISOString(), to: "972500000700", status: "delivered" },
+      { at: new Date().toISOString(), to: "972500000701", status: "failed", error: "Re-engagement message" },
+    ],
+  });
+  const failed = watchdog.recentFailedDeliveries(null);
+  assert.strictEqual(failed.length, 1, "only the failures");
+  assert.strictEqual(failed[0].to, "972500000701");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

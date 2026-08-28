@@ -145,6 +145,13 @@ async function rehearseAndArm() {
   });
 
   if (result.implausible) {
+    // Disarm what actually arms things. The global flag is no longer the switch
+    // that matters - each automation has its own, and disarming the old one
+    // while leaving those on would be a safeguard that reports success and does
+    // nothing. The list is kept so it can be restored in one click.
+    const enabled = store.getSettings().enabledAutomations || [];
+    if (enabled.length) store.setSetting("disarmedByCanary", enabled);
+    store.setSetting("enabledAutomations", []);
     store.setSetting("customerAutomationsEnabled", false);
     console.error(
       `Canary: ${result.total} intended messages is above the plausible limit of ${result.threshold}. Automations disarmed.`

@@ -1390,6 +1390,10 @@ const SCHEDULE = [
   { name: "דוח חובות", every: 30, run: checkDebtReport },
   { name: "דוח נוכחות", every: 30, run: checkAttendanceReport },
   { name: "תזכורות משימות", every: 30, run: checkDueTasks },
+  // Watches the watchers: an automation that has gone quiet, and messages that
+  // never arrived. Every 60 ticks is ten minutes, which is often enough for
+  // something measured in days.
+  { name: "בדיקת תקינות", every: 60, run: () => require("./watchdog").run(module.exports) },
 ];
 
 function startMonitoring(tickMs = TICK_MS) {

@@ -262,12 +262,29 @@ app.listen(port, () => console.log(`WhatsApp bot listening on port ${port}`));
 // SEED_AUTOMATIONS=true marks everything currently outstanding as already
 // handled - silently, sending nothing - so that switching automations on does
 // not fire a month of backlog at once. Set it for one deploy, then remove it.
+// A rehearsal before the automations are allowed to do anything.
+//
+// This runs on every start, which means after every deploy - the exact moment
+// the risk exists. It runs the real checks against the real database, counts
+// what they intend to send, and looks at the number before anybody is contacted.
+// On the morning a widened query wrote to 46 people, that number would have read
+// 46 on a system whose normal day is two or three, and this would have refused
+// to arm rather than sending them.
+//
+// A rehearsal that cannot run is not permission to proceed: it disarms too.
+function startAfterRehearsal() {
+  require("./canary")
+    .rehearseAndArm()
+    .catch((e) => console.error("Canary error:", e.message))
+    .finally(() => arboxMonitor.startMonitoring());
+}
+
 if (process.env.SEED_AUTOMATIONS === "true") {
   console.log("SEED_AUTOMATIONS is set - marking the existing backlog as handled before monitoring starts.");
   require("./seed-automations")
     .seedAutomations()
     .catch((e) => console.error("Seeding failed:", e.message))
-    .finally(() => arboxMonitor.startMonitoring());
+    .finally(startAfterRehearsal);
 } else {
-  arboxMonitor.startMonitoring();
+  startAfterRehearsal();
 }
