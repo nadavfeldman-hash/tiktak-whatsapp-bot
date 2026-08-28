@@ -465,6 +465,7 @@ const BIRTHDAY_TEMPLATES = [
 
 async function checkBirthdays() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("יום הולדת")) return;
 
   const state = store.getArboxState();
   const today = new Date().toISOString().slice(0, 10);
@@ -711,6 +712,7 @@ async function checkTrialBookings() {
 
 async function checkTrialReminders() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("תזכורת אימון ניסיון")) return;
 
   const state = store.getArboxState();
   const sentKeys = new Set(state.sentTrialReminderKeys || []);
@@ -983,12 +985,59 @@ async function checkLeadNoResponse() {
   });
   let changed = false;
 
+  // Every skip below is recorded. They used to be silent `continue`s, and they
+  // happen before queueMessage, so the event log never saw them - which meant a
+  // status Nadav had just set could produce no message and no explanation, and
+  // the only answer available was a guess. The whole point of the log is that
+  // this question has an answer.
+  const changedThisRun = leads.filter(
+    (l) => previousStatuses[l.user_id] !== undefined && previousStatuses[l.user_id] !== l.lead_status
+  );
+
   for (const lead of leads) {
+    const moved =
+      previousStatuses[lead.user_id] !== undefined && previousStatuses[lead.user_id] !== lead.lead_status;
+    const name = firstNameOnly(lead.first_name || "");
+
     const stage = leadNoResponseStage(lead.lead_status);
-    if (!stage) continue;
-    if (!lead.phone) continue;
+    if (!stage) {
+      // Only worth a line when he has just moved them; otherwise this is every
+      // lead in the list, every ten seconds.
+      if (moved) {
+        events.decision({
+          automation: "שינוי סטטוס ליד",
+          person: name,
+          phone: lead.phone,
+          outcome: "לא נשלח",
+          reason: `אין הודעה לסטטוס "${lead.lead_status}"`,
+        });
+      }
+      continue;
+    }
+    if (!lead.phone) {
+      if (moved) {
+        events.decision({
+          automation: "שינוי סטטוס ליד",
+          person: name,
+          outcome: "לא נשלח",
+          reason: "אין טלפון בארבוקס",
+        });
+      }
+      continue;
+    }
     const key = `${lead.user_id}:${stage}`;
-    if (notifiedKeys.has(key)) continue;
+    if (notifiedKeys.has(key)) {
+      if (moved) {
+        events.decision({
+          automation: "שינוי סטטוס ליד",
+          person: name,
+          phone: lead.phone,
+          outcome: "לא נשלח",
+          reason: `כבר קיבל את ההודעה של "${lead.lead_status}" בעבר`,
+        });
+      }
+      continue;
+    }
 
     // Arbox reports updated_at as a bare date with no time, so it cannot tell us
     // whether a status changed before or after we went live. Instead we keep a
@@ -996,8 +1045,8 @@ async function checkLeadNoResponse() {
     // actual change we witnessed: the first cycle records the current picture
     // silently, and from then on a status Nadav sets is what triggers the
     // message.
-    if (previousStatuses[lead.user_id] === undefined) continue; // first sighting
-    if (previousStatuses[lead.user_id] === lead.lead_status) continue; // unchanged
+    if (previousStatuses[lead.user_id] === undefined) continue; // first sighting - nothing to compare
+    if (!moved) continue; // status has not changed since the last cycle
 
     // Nadav moves a lead to "ללא מענה N" the moment a call goes unanswered, so
     // that status change IS the trigger - the message goes out immediately
@@ -1020,6 +1069,11 @@ async function checkLeadNoResponse() {
     await sleep(PACE_MS);
     notifiedKeys.add(key);
     changed = true;
+  }
+
+  if (changedThisRun.length === 0) {
+    // Nothing moved. Recorded nowhere on purpose - this is the normal state and
+    // logging it every ten seconds would bury everything that matters.
   }
 
   // The snapshot is saved every cycle, whether or not anything was sent, so the
@@ -1245,6 +1299,7 @@ async function registeredUserIdsOn(dateStr) {
 
 async function checkLateCancellations() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("ביטול בלי הרשמה מחדש")) return;
 
   const state = store.getArboxState();
   const notifiedKeys = new Set(state.notifiedLateCancellationKeys || []);
@@ -1308,6 +1363,7 @@ const STREAK_MILESTONES = [10, 25, 50, 100];
 
 async function checkStreaks() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("רצף אימונים")) return;
 
   const state = store.getArboxState();
   const lastRun = state.lastStreakCheckDate ? new Date(state.lastStreakCheckDate) : null;
@@ -1356,6 +1412,7 @@ const NEW_MEMBER_CHECKIN_MILESTONES = [14, 28]; // days since joining
 
 async function checkNewMemberCheckins() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("צ׳ק-אין מצטרף חדש")) return;
 
   const state = store.getArboxState();
   const today = new Date().toISOString().slice(0, 10);
