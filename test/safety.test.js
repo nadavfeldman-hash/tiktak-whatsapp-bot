@@ -536,8 +536,7 @@ test("somebody who asked not to be messaged is not messaged", async () => {
   assert.strictEqual(typeof monitor.optedOut, "function", "the check must be reachable to be trusted");
   const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
   const fnStart = src.indexOf("function queueMessage");
-  const fn = src.slice(fnStart, src.indexOf("
-}", fnStart));
+  const fn = src.slice(fnStart, src.indexOf("\n}", fnStart));
   assert.ok(fn.includes("optedOut("), "and it must sit in the one place every message passes");
 });
 
