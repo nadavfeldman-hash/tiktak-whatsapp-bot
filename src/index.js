@@ -160,16 +160,13 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Marking the message read is a blue tick and nothing more. It used to sit
-    // unguarded at the top of this block, so a hiccup on that one call threw the
-    // whole thing into the catch below and the customer got "sorry, technical
-    // problem" instead of an answer - a cosmetic call breaking the only part
-    // that matters.
-    try {
-      await whatsapp.markAsRead(incoming.id);
-    } catch (e) {
-      console.log("Could not mark as read (harmless):", e.message);
-    }
+    // Deliberately NOT marking the message read.
+    //
+    // This number is shared: the API and Nadav's own WhatsApp Business app are
+    // both looking at the same inbox. Marking a message read here cleared it on
+    // his phone too - the notification appeared and the unread badge vanished in
+    // the same instant, so customers' messages went by without him seeing them.
+    // The only thing it bought was a blue tick for the sender.
 
     if (incoming.unsupported) {
       queueReply(incoming.from, "כרגע אני תומך רק בהודעות טקסט. אפשר לכתוב לי מה תרצה?", "(הודעה שאינה טקסט)");
