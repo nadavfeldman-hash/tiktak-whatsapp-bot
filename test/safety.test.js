@@ -540,6 +540,30 @@ test("somebody who asked not to be messaged is not messaged", async () => {
   assert.ok(fn.includes("optedOut("), "and it must sit in the one place every message passes");
 });
 
+test("the clock is the gym's, not Greenwich's", async () => {
+  // Render runs in UTC and every "send this at nine" in the code means the gym's
+  // morning. Three hours out, the same-day trial reminder arrived at noon for a
+  // workout that started at seven - a reminder for a session that had finished
+  // five hours earlier.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "index.js"), "utf8");
+  const tz = src.indexOf("process.env.TZ");
+  assert.ok(tz >= 0, "the timezone must be set explicitly");
+  assert.ok(src.includes("Asia/Jerusalem"), "and it must be the gym's");
+  assert.ok(tz < src.indexOf('require("dotenv")'), "before anything reads a clock");
+});
+
+test("a suspiciously small attendance picture is not acted on", async () => {
+  // The dangerous failure is not an error - an error aborts the check and nobody
+  // is written to. It is Arbox answering successfully with less than it should,
+  // because then people who trained yesterday are simply missing and the check
+  // concludes, correctly given what it can see, that they have stopped coming.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const start = src.indexOf("async function checkAbsences");
+  const check = src.slice(start, src.indexOf("\n}", start));
+  assert.ok(check.includes("attendanceSample"), "each run must be compared against the last");
+  assert.ok(/0\.7|70/.test(check), "and a sharp drop must stop the run");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

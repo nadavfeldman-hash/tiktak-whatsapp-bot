@@ -877,6 +877,27 @@ async function checkAbsences() {
   const { lastSeen, people, booked } = await attendancePicture();
   const today = new Date(new Date().toISOString().slice(0, 10));
 
+  // The dangerous failure here is not an error - errors abort the check and
+  // nobody is written to. It is Arbox answering successfully with less than it
+  // should: a page that comes back empty, a request that quietly truncates. Then
+  // people who trained yesterday are simply missing from the picture, and the
+  // check concludes, correctly given what it can see, that they have stopped
+  // coming. They get "we miss you" the day after their workout.
+  //
+  // Nothing in the data says "this is incomplete", so the only signal available
+  // is that it looks nothing like last time. A third of the gym does not vanish
+  // between two runs.
+  const previous = store.getArboxState().attendanceSample;
+  const sample = { attendees: lastSeen.size, at: new Date().toISOString() };
+  if (previous && previous.attendees > 20 && sample.attendees < previous.attendees * 0.7) {
+    events.failure(
+      "נעדר מהאימונים",
+      `נראים רק ${sample.attendees} מתאמנים במקום ${previous.attendees} - נתונים חלקיים, מדלג על הסבב`
+    );
+    return;
+  }
+  store.setArboxState({ attendanceSample: sample });
+
   // Everyone currently mid-absence, and which stage they are in.
   const due = [];
   for (const [id, date] of lastSeen) {

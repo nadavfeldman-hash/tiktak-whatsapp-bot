@@ -1,3 +1,15 @@
+// Before anything reads a clock.
+//
+// Render runs in UTC, and every "send this at nine in the morning" in the code
+// means the gym's morning, not Greenwich's. Three hours out, that made the
+// same-day trial reminder arrive at noon for a workout that started at seven -
+// a reminder for a session that had finished five hours earlier - and put the
+// evening attendance report at midnight.
+//
+// Set here, at the top of the entry point, because it has to be in place before
+// any module computes a date at load time.
+process.env.TZ = process.env.TZ || "Asia/Jerusalem";
+
 require("dotenv").config();
 const express = require("express");
 const whatsapp = require("./whatsapp");
