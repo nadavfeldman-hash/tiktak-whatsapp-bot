@@ -126,6 +126,19 @@ function automationOn(label) {
 }
 
 
+
+// Off means "do not look", not "look and throw away".
+//
+// These checks work by comparing what Arbox says now against what they recorded
+// last time. While the automation was switched off they kept running and kept
+// recording - so a status Nadav set during that window was seen, not sent, and
+// written down as handled. Switching the automation back on could not recover
+// it: as far as the check was concerned nothing had changed since. Two leads
+// were swallowed exactly that way.
+function watching(label) {
+  return automationOn(label);
+}
+
 // Small pause between messages in any loop that could message many different
 // recipients in one run (e.g. the first-ever attendance-trend sweep can hit
 // 100+ people) - keeps us well under WhatsApp's send-rate limits.
@@ -423,6 +436,7 @@ async function checkFailedPayments() {
 
 async function checkNewMembers() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("מצטרף חדש")) return;
 
   const state = store.getArboxState();
   // Tracked as a set of people already welcomed rather than "the highest user_id
@@ -459,6 +473,7 @@ async function checkNewMembers() {
 
 async function checkLostLeads() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("ליד אבוד")) return;
 
   const state = store.getArboxState();
   // Same reasoning as the welcome check: track who has been said goodbye to,
@@ -541,6 +556,7 @@ function hebrewWhen(dateStr) {
 
 async function checkTrialBookings() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("נרשם לאימון ניסיון")) return;
 
   const state = store.getArboxState();
   const confirmed = new Set(state.confirmedTrialKeys || []);
@@ -742,6 +758,7 @@ function usablePhone(phone) {
 
 async function checkAbsences() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("נעדר מהאימונים")) return;
 
   const state = store.getArboxState();
   // Keyed by user and stage, so someone who keeps staying away hears from us
@@ -822,6 +839,7 @@ function leadNoResponseStage(status) {
 
 async function checkLeadNoResponse() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
+  if (!watching("שינוי סטטוס ליד")) return;
 
   const state = store.getArboxState();
   const notifiedKeys = new Set(state.notifiedLeadNoResponseKeys || []);
