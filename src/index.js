@@ -165,6 +165,10 @@ app.post("/webhook", async (req, res) => {
         statuses.map((s) => ({
           at: new Date().toISOString(),
           to: s.recipient_id,
+          // Without the id a report cannot be tied to the message it is about,
+          // so "did that one arrive?" stays unanswerable even with the reports
+          // in hand.
+          id: s.id,
           status: s.status,
           error: s.errors ? s.errors.map((e) => e.title || e.message).join("; ") : null,
         }))
