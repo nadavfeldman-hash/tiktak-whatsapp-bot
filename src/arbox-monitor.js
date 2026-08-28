@@ -52,6 +52,16 @@ function queueMessage(to, template, params = [], options = {}) {
     return null;
   }
 
+  // Twenty-five of the hundred and ninety members have asked not to be messaged,
+  // and only two of the eleven automations were checking. The worst of them was
+  // the absence reminder: somebody who asked for quiet and then stopped coming
+  // would be told we miss them, which is exactly the person who blocks the
+  // number. Checked here, once, where every message passes.
+  if (optedOut(phone)) {
+    events.decision({ automation: label, person: who, phone, outcome: "לא נשלח", reason: "ביקש לא לקבל הודעות" });
+    return null;
+  }
+
   const queued = outbox.propose({
     to: phone,
     template,
@@ -178,6 +188,43 @@ function watching(label) {
 // business is stored as a name the first word is still a reasonable thing to
 // greet. Getting this wrong in the other direction - inventing a name - is far
 // worse than leaving one long.
+// Who has asked not to be messaged, by phone.
+//
+// Refreshed periodically rather than on every call - it is two requests, and a
+// person who changes their mind can wait a few minutes. Deliberately fails
+// closed in one direction only: if the list cannot be loaded we do not silence
+// everybody, but neither do we forget somebody already known to have opted out.
+let optOutCache = { at: 0, phones: new Set() };
+const OPT_OUT_TTL_MS = 10 * 60 * 1000;
+
+function shortPhone(phone) {
+  return String(phone || "").replace(/\D/g, "").slice(-9);
+}
+
+async function refreshOptOuts() {
+  if (Date.now() - optOutCache.at < OPT_OUT_TTL_MS) return;
+  try {
+    const [members, leads] = await Promise.all([
+      arbox.getAllActiveMembers(),
+      arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" }).then((r) => r.data || []),
+    ]);
+    const phones = new Set();
+    for (const p of [...members, ...leads]) {
+      if (p.allow_sms === "no" && p.phone) phones.add(shortPhone(p.phone));
+    }
+    optOutCache = { at: Date.now(), phones };
+    console.log(`Opt-outs refreshed: ${phones.size} people have asked not to be messaged.`);
+  } catch (e) {
+    // Keep whatever we already knew rather than forgetting it.
+    console.error("Could not refresh opt-outs, keeping the previous list:", e.message);
+    optOutCache.at = Date.now();
+  }
+}
+
+function optedOut(phone) {
+  return optOutCache.phones.has(shortPhone(phone));
+}
+
 function firstNameOnly(value) {
   const name = String(value ?? "").trim();
   if (!name.includes(" ")) return name;
@@ -1218,7 +1265,11 @@ async function checkLateCancellations() {
     const r = await queueMessage(c.phone.replace("+", ""), "late_cancellation_callout", [
       c.first_name || "",
       c.class_name || "אימון",
-      `${c.date || ""} ${(c.start_time || "").slice(0, 5)}`.trim(),
+      // The template has two blanks; this call was passing three. WhatsApp
+      // rejects a template whose parameter count does not match, so every one of
+      // these failed - silently, since a rejected send just throws into a catch.
+      // The automation looked switched on and working and had never delivered a
+      // single message.
     ]);
     if (r === null) continue;
     await sleep(PACE_MS);
@@ -1384,6 +1435,7 @@ function once(name, fn) {
 // every ten seconds is rude and pointless.
 const TICK_MS = 10 * 1000;
 const SCHEDULE = [
+  { name: "רשימת מסורבים", every: 1, run: refreshOptOuts },
   // Nadav sets a status and looks at his phone. This is the one that must feel
   // instant.
   { name: "שינוי סטטוס ליד", every: 1, run: checkLeadNoResponse },
@@ -1410,6 +1462,8 @@ const SCHEDULE = [
   // Watches the watchers: an automation that has gone quiet, and messages that
   // never arrived. Every 60 ticks is ten minutes, which is often enough for
   // something measured in days.
+  // Who has asked not to be messaged, refreshed before anything decides to
+  // message them.
   { name: "בדיקת תקינות", every: 60, run: () => require("./watchdog").run(module.exports) },
 ];
 
@@ -1453,6 +1507,8 @@ function startMonitoring(tickMs = TICK_MS) {
 
 module.exports = {
   lastRun,
+  optedOut,
+  refreshOptOuts,
   once,
   ALL_AUTOMATIONS,
   automationOn,

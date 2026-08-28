@@ -475,6 +475,72 @@ test("a birthday greeting only goes to someone who actually trains here", async 
   );
 });
 
+test("every message passes exactly as many blanks as its template has", async () => {
+  // WhatsApp rejects a template whose parameter count does not match, and a
+  // rejected send just throws into a catch - so the late-cancellation automation
+  // looked switched on and working while having never delivered a single
+  // message. Nothing was watching the one thing that made it impossible.
+  const templates = require("../templates.json");
+  const blanks = {};
+  for (const t of templates) {
+    blanks[t.name] = new Set((t.body.match(/\{\{\d+\}\}/g) || [])).size;
+  }
+
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const problems = [];
+  let i = 0;
+  while ((i = src.indexOf("queueMessage(", i)) !== -1) {
+    let depth = 0;
+    let j = i + "queueMessage".length;
+    for (; j < src.length; j++) {
+      if (src[j] === "(") depth++;
+      else if (src[j] === ")" && --depth === 0) break;
+    }
+    const call = src.slice(i, j + 1);
+    i = j;
+
+    const named = /,\s*"([a-z_0-9]+)"\s*,/.exec(call);
+    if (!named) continue; // template chosen at runtime - covered by the variants below
+    const name = named[1];
+    const expected = blanks[name] ?? blanks[name.replace(/_v2$/, "")];
+    if (expected === undefined) continue;
+
+    const arr = /\[([\s\S]*)\]/.exec(call);
+    let count = 0;
+    if (arr) {
+      // Comments inside the array are prose, and prose contains commas.
+      const body = arr[1].replace(/\/\/[^\n]*/g, "").trim();
+      if (!body) continue;
+      let d = 0;
+      count = 1;
+      for (const ch of body) {
+        if ("([{".includes(ch)) d++;
+        else if (")]}".includes(ch)) d--;
+        else if (ch === "," && d === 0) count++;
+      }
+      // A trailing comma before the closing bracket is not another argument.
+      if (/,\s*$/.test(body)) count--;
+    }
+    if (count !== expected) problems.push(`${name}: template has ${expected}, code sends ${count}`);
+  }
+
+  assert.deepStrictEqual(problems, [], problems.join("; "));
+});
+
+test("somebody who asked not to be messaged is not messaged", async () => {
+  // Twenty-five of the hundred and ninety members have asked for quiet, and only
+  // two of the eleven automations were checking. The worst was the absence
+  // reminder - a person who asked to be left alone and then stopped coming would
+  // be told we miss them, which is exactly the person who blocks the number.
+  const monitor = require("../src/arbox-monitor");
+  assert.strictEqual(typeof monitor.optedOut, "function", "the check must be reachable to be trusted");
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const fnStart = src.indexOf("function queueMessage");
+  const fn = src.slice(fnStart, src.indexOf("
+}", fnStart));
+  assert.ok(fn.includes("optedOut("), "and it must sit in the one place every message passes");
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();
