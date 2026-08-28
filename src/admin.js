@@ -350,6 +350,38 @@ router.post("/toggle-shadow", requireAuth, (req, res) => {
   res.redirect("/admin/dashboard#automations");
 });
 
+// Clear the send history for one number, so the same test can be run twice.
+//
+// The no-repeats rules make testing impossible by design: once a template has
+// gone to a number it cannot go again for seven days, which is correct for
+// customers and useless for a test line. This forgets one number and nobody
+// else, so the guards protecting real people are untouched.
+router.post("/forget-number", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  const digits = String(req.body.phone || "").replace(/D/g, "");
+  if (digits.length < 9) return res.redirect("/admin/dashboard?forget=bad#testing");
+
+  const tail = digits.slice(-9);
+  const state = store.getArboxState();
+  const log = state.sentTemplateLog || {};
+  const kept = {};
+  let removed = 0;
+  for (const [key, at] of Object.entries(log)) {
+    const phone = key.slice(0, key.lastIndexOf(":"));
+    if (phone.replace(/D/g, "").endsWith(tail)) removed++;
+    else kept[key] = at;
+  }
+  // setArboxState merges the send log rather than replacing it - deliberately,
+  // so it can never shrink by accident. Removing an entry has to go through the
+  // file, and only ever for the one number asked for.
+  const fsMod = require("fs");
+  const file = require("path").join(store.dataDir, "arbox-state.json");
+  const raw = JSON.parse(fsMod.readFileSync(file, "utf8"));
+  raw.sentTemplateLog = kept;
+  fsMod.writeFileSync(file, JSON.stringify(raw, null, 2));
+  console.log(`Forgot ${removed} sends to ${tail} for testing.`);
+  res.redirect(`/admin/dashboard?forgot=${removed}#testing`);
+});
+
 router.post("/notes/add", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
   const text = (req.body.text || "").trim();
   if (text) store.addAdminNote(text);
@@ -713,6 +745,21 @@ router.get("/dashboard", requireAuth, async (req, res) => {
                 <div style="margin-top:10px;"><button class="btn-primary" type="submit">שמור עדכון חדש</button></div>
               </form>
             </div>
+          </div>
+        </div>
+
+        <div class="section" id="testing">
+          <div class="section-header"><div class="section-title">🧪 מספר לבדיקות</div></div>
+          <div class="card card-pad">
+            <div class="toggle-desc" style="max-width:none;">
+              אותה הודעה חסומה 7 ימים לאותו מספר - נכון ללקוחות, אבל הופך בדיקה חוזרת לבלתי אפשרית.
+              כאן מוחקים את היסטוריית השליחות של מספר אחד בלבד, כדי שאפשר יהיה לבדוק שוב.
+              <strong>לא נוגע באף אחד אחר.</strong>
+            </div>
+            <form method="POST" action="/admin/forget-number" style="display:flex;gap:10px;margin-top:12px;">
+              <input type="text" name="phone" placeholder="050-1234567" style="max-width:260px;">
+              <button class="btn-ghost" type="submit">אפס היסטוריה למספר הזה</button>
+            </form>
           </div>
         </div>
 
