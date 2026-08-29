@@ -121,6 +121,20 @@ async function sendTemplate(to, templateName, params = [], options = {}) {
   // everything else already approved. It knows nothing about why any particular
   // message qualified - only how many are leaving - which is what makes it hold
   // when a check is wrong in a way nobody predicted.
+  // Shabbat and the night, before anything else. Held rather than dropped: the
+  // queue keeps an approved message and tries again, so one that qualifies at
+  // midnight goes out after eight in the morning. Nothing this system sends is
+  // urgent enough to wake somebody, and nothing is urgent enough to arrive on
+  // Shabbat.
+  //
+  // No exception, not even a broadcast - a broadcast is the worst case of all,
+  // since it would reach everybody at once.
+  const quiet = require("./quiet-hours").holdReason();
+  if (quiet) {
+    console.log(`Holding ${templateName} to ${to}: ${quiet}`);
+    return null;
+  }
+
   // A broadcast is exempt, and only a broadcast. The fuse exists to stop volume
   // nobody intended; a broadcast is volume stated on screen, counted, and
   // confirmed by hand a second time. Left fused it would stop after eight of a

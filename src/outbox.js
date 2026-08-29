@@ -227,6 +227,14 @@ async function send() {
 
     for (const m of messages) {
       try {
+        // Replies in chat are held too. The rule is about when a customer is
+        // written to, not about which mechanism the words travel through.
+        const quiet = require("./quiet-hours").holdReason();
+        if (quiet) {
+          blocked = true;
+          console.log(`Holding reply to ${m.to}: ${quiet}`);
+          continue;
+        }
         const res =
           m.kind === "text"
             ? await whatsapp.sendText(m.to, m.body)

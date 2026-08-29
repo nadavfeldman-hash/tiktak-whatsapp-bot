@@ -30,6 +30,15 @@ global.fetch = async () => {
   return { ok: true, status: 200, text: async () => "", json: async () => ({}) };
 };
 
+// The quiet-hours rule asks the real clock, so on a Friday evening the whole
+// suite would fail for the right reason and tell us nothing about anything else.
+// Calls with no argument - which is how production asks - are answered "not
+// quiet"; calls with an explicit moment get the real answer, which is what the
+// quiet-hours tests below use.
+const quietHours = require("../src/quiet-hours");
+const realHoldReason = quietHours.holdReason;
+quietHours.holdReason = (now) => (now ? realHoldReason(now) : null);
+
 function reset() {
   store.setArboxState({ sentTemplateLog: {}, recentSendTimes: [], fuse: {} });
   // setArboxState merges sentTemplateLog rather than replacing it (a check that
@@ -619,6 +628,41 @@ test("switching an automation on is safe by itself", async () => {
 
   const admin = fs.readFileSync(path.join(__dirname, "..", "src", "admin.js"), "utf8");
   assert.ok(admin.includes("armSilentRun"), "turning it on must re-arm the silence");
+});
+
+test("nothing goes out on Shabbat or in the middle of the night", async () => {
+  // Two rules with no exception. A message at three in the morning wakes
+  // somebody, and one on Shabbat reaches customers who keep it - in both cases
+  // from a business they pay, and in both cases the damage is done the moment
+  // the phone buzzes. Nothing this system sends is urgent: it is all follow-ups,
+  // reminders and greetings.
+  const quiet = require("../src/quiet-hours");
+  const at = (day, hour) => new Date(2026, 7, 30 + day, hour, 0, 0);
+
+  assert.ok(quiet.isQuiet(at(6, 3)), "three in the morning");
+  assert.ok(quiet.isQuiet(at(0, 3)), "three in the morning on any day");
+  assert.ok(quiet.isQuiet(at(1, 23)), "late evening");
+  assert.ok(quiet.isQuiet(at(6, 11)), "Saturday midday");
+  assert.ok(quiet.isQuiet(at(6, 19)), "Saturday evening, before Shabbat is out");
+  assert.ok(quiet.isQuiet(at(5, 17)), "Friday afternoon, after Shabbat comes in");
+
+  assert.ok(!quiet.isQuiet(at(0, 10)), "Sunday morning is fine");
+  assert.ok(!quiet.isQuiet(at(3, 19)), "Wednesday evening is fine");
+  assert.ok(!quiet.isQuiet(at(5, 10)), "Friday morning is fine");
+});
+
+test("a message held for quiet hours is held, not lost", async () => {
+  // Held, not dropped: one that qualifies at midnight goes out after eight the
+  // next morning rather than disappearing. The queue keeps an approved item and
+  // tries again, which is what makes an absolute rule affordable.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "whatsapp.js"), "utf8");
+  const fnStart = src.indexOf("async function sendTemplate");
+  const fn = src.slice(fnStart, src.indexOf("\n}", fnStart));
+  assert.ok(fn.includes("quiet-hours"), "the sender must check before sending");
+  assert.ok(fn.includes("return null"), "and decline rather than throw, so the queue retries");
+
+  const outboxSrc = fs.readFileSync(path.join(__dirname, "..", "src", "outbox.js"), "utf8");
+  assert.ok(outboxSrc.includes("quiet-hours"), "chat replies are held too");
 });
 
 test("a proposal waits and sends nothing", async () => {
