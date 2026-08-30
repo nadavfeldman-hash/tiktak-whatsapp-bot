@@ -651,6 +651,26 @@ test("nothing goes out on Shabbat or in the middle of the night", async () => {
   assert.ok(!quiet.isQuiet(at(5, 10)), "Friday morning is fine");
 });
 
+test("nothing goes out on a festival or its eve", async () => {
+  // Read from the Hebrew calendar built into Node rather than a table of dates,
+  // so this cannot quietly expire in a year and start messaging people on Yom
+  // Kippur because nobody remembered to extend a list.
+  const quiet = require("../src/quiet-hours");
+  const at = (d, h) => new Date(`${d}T${String(h).padStart(2, "0")}:00:00`);
+
+  assert.ok(quiet.holdReason(at("2026-09-21", 10)), "Yom Kippur");
+  assert.ok(quiet.holdReason(at("2026-09-20", 17)), "the eve of Yom Kippur");
+  assert.ok(quiet.holdReason(at("2026-09-12", 10)), "Rosh Hashanah");
+  assert.ok(quiet.holdReason(at("2026-09-26", 12)), "Sukkot");
+  assert.ok(quiet.holdReason(at("2026-10-03", 12)), "Simchat Torah");
+  assert.ok(quiet.holdReason(at("2027-04-22", 12)), "Pesach");
+  assert.ok(quiet.holdReason(at("2027-06-11", 12)), "Shavuot");
+
+  // The intermediate days of a festival are ordinary working days here.
+  assert.strictEqual(quiet.holdReason(at("2026-09-23", 12)), null, "chol hamoed is a working day");
+  assert.strictEqual(quiet.holdReason(at("2026-09-01", 12)), null, "an ordinary Tuesday");
+});
+
 test("a message held for quiet hours is held, not lost", async () => {
   // Held, not dropped: one that qualifies at midnight goes out after eight the
   // next morning rather than disappearing. The queue keeps an approved item and
