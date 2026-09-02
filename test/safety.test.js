@@ -685,6 +685,28 @@ test("a message held for quiet hours is held, not lost", async () => {
   assert.ok(outboxSrc.includes("quiet-hours"), "chat replies are held too");
 });
 
+test("somebody who trained this morning is not told we miss them", async () => {
+  // Three people trained at seven and were told at eight that we had not seen
+  // them - Elad at 07:00, Eran at 07:10, Michal at 07:30, all messaged at 08:00.
+  // Nothing was wrong with the absence logic: the picture it reads spans
+  // thirty-five days and takes minutes to assemble, so by the time it was ready
+  // the morning had moved on without it.
+  //
+  // Today is now checked last, in one request for one day, immediately before
+  // anybody is written to.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const start = src.indexOf("async function checkAbsences");
+  const check = src.slice(start, src.indexOf("\n}", start));
+  assert.ok(check.includes("activeToday"), "today must be looked at separately");
+  assert.ok(check.includes("activeToday.has(id)"), "and anyone in it must be skipped");
+  // The order matters: the day query has to come after the long one, or it is
+  // just as stale as the picture it is correcting.
+  assert.ok(
+    check.indexOf("activeToday") > check.indexOf("attendancePicture"),
+    "and it must be asked last, not with the rest"
+  );
+});
+
 test("a proposal waits and sends nothing", async () => {
   reset();
   clearOutbox();

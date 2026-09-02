@@ -947,6 +947,33 @@ async function checkAbsences() {
   }
   store.setArboxState({ attendanceSample: sample });
 
+  // Today, checked immediately before anybody is written to.
+  //
+  // The picture above spans thirty-five days and takes a couple of minutes to
+  // assemble; by the time it is ready, this morning has moved on. Three people
+  // trained at seven and were told at eight that we had not seen them - Elad at
+  // 07:00, Eran at 07:10, Michal at 07:30, all messaged at 08:00. Nothing was
+  // wrong with the absence logic; the data it was reading was simply an hour old.
+  //
+  // This is one request for one day, asked last, so it sees the morning as it
+  // actually is. Somebody already booked into a session later today is skipped
+  // for the same reason: they have not stopped coming, they are coming tonight.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const activeToday = new Set();
+  try {
+    for (const session of await fetchSessionsPaged(todayStr, todayStr)) {
+      for (const r of session.registration_Details || []) {
+        activeToday.add(String(r.user_id));
+      }
+    }
+  } catch (e) {
+    // Without today's picture we cannot tell who has just trained, and the cost
+    // of guessing wrong is telling somebody we miss them an hour after they
+    // left. Better to say nothing this cycle.
+    events.failure("נעדר מהאימונים", `לא ניתן לבדוק את היום הנוכחי (${e.message.slice(0, 60)}) - מדלג`);
+    return;
+  }
+
   // Everyone currently mid-absence, and which stage they are in.
   const due = [];
   for (const [id, date] of lastSeen) {
@@ -954,6 +981,8 @@ async function checkAbsences() {
     const stage = absenceStage(daysAgo);
     if (stage === null) continue;
     if (booked.has(id)) continue;
+    // Trained or booked today - whatever the thirty-five-day picture says.
+    if (activeToday.has(id)) continue;
     const person = people.get(id) || {};
     const phone = usablePhone(person.phone);
     if (!phone) continue;
