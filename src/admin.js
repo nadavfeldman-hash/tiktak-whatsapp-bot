@@ -356,6 +356,23 @@ router.post("/toggle-shadow", requireAuth, (req, res) => {
 
 // Clear the send history for one number, so the same test can be run twice.
 //
+// Somebody says "stop writing to me" and it has to be true a second later.
+//
+// Consent belongs in Arbox, but its public API will not write to a user - every
+// verb comes back 405 - so recording it there means finding the member card and
+// unticking a box, and the next automation cycle is ten seconds away. This
+// writes it into the bot directly, and the bot honours both.
+router.post("/silence", express.urlencoded({ extended: false }), requireAuth, (req, res) => {
+  const phone = String(req.body.phone || "");
+  const name = String(req.body.name || "").trim();
+  try {
+    require("./arbox-monitor").silence(phone, name, "הוסף מהפאנל");
+  } catch {
+    return res.redirect("/admin/dashboard?silence=bad#testing");
+  }
+  return res.redirect("/admin/dashboard?silence=ok#testing");
+});
+
 // The no-repeats rules make testing impossible by design: once a template has
 // gone to a number it cannot go again for seven days, which is correct for
 // customers and useless for a test line. This forgets one number and nobody
@@ -749,6 +766,34 @@ router.get("/dashboard", requireAuth, async (req, res) => {
                 <div style="margin-top:10px;"><button class="btn-primary" type="submit">שמור עדכון חדש</button></div>
               </form>
             </div>
+          </div>
+        </div>
+
+        <div class="section" id="silence">
+          <div class="section-header"><div class="section-title">🔇 להוציא מישהו מהאוטומציות</div></div>
+          <div class="card card-pad">
+            <div class="toggle-desc" style="max-width:none;">
+              מי שמופיע כאן לא יקבל שום הודעה מהמערכת - לא אוטומציה ולא הודעה כללית.
+              <strong>אין דרך להחזיר מכאן</strong>, בכוונה. אם מישהו נכנס בטעות, תגיד לי ואוציא אותו ידנית.
+            </div>
+            <form method="POST" action="/admin/silence" style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
+              <input type="text" name="phone" placeholder="050-1234567" style="max-width:200px;" required>
+              <input type="text" name="name" placeholder="שם (לא חובה)" style="max-width:200px;">
+              <button class="btn-ghost" type="submit">אל תשלחו לו יותר</button>
+            </form>
+            ${(() => {
+              const list = require("./arbox-monitor").locallySilenced();
+              if (!list.length) return `<div class="muted" style="margin-top:14px;">אף אחד ברשימה כרגע.</div>`;
+              return `<div style="margin-top:16px;font-size:14px;">
+                <div class="muted" style="margin-bottom:6px;">${list.length} ברשימה:</div>
+                ${list
+                  .map(
+                    (p) =>
+                      `<div style="padding:4px 0;">🔇 ${esc(p.name || "ללא שם")} <span class="muted">${esc(p.phone)}</span></div>`
+                  )
+                  .join("")}
+              </div>`;
+            })()}
           </div>
         </div>
 

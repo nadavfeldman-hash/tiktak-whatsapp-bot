@@ -549,6 +549,52 @@ test("somebody who asked not to be messaged is not messaged", async () => {
   assert.ok(fn.includes("optedOut("), "and it must sit in the one place every message passes");
 });
 
+test("a person Nadav silences by hand stays silenced", async () => {
+  // Arbox is where consent belongs, but its public API will not write to a user -
+  // every verb returns 405 - so the only way to record "stop writing to me" there
+  // is a click in the UI. That is too slow: somebody says it in a conversation
+  // and the next automation cycle is ten seconds away. The bot therefore keeps
+  // its own list, and this is the test that it is actually consulted.
+  const monitor = require("../src/arbox-monitor");
+  const store = require("../src/store");
+  const file = path.join(store.dataDir, "opt-outs.json");
+  const before = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+
+  try {
+    const phone = "+972500000199";
+    assert.strictEqual(monitor.optedOut(phone), false, "nobody is silenced before being added");
+
+    monitor.silence(phone, "בדיקה", "טסט");
+    assert.strictEqual(monitor.optedOut(phone), true, "and silenced immediately after");
+
+    // The number arrives from Arbox, from WhatsApp and from Nadav typing it, in
+    // three different shapes. All three are the same person.
+    assert.strictEqual(monitor.optedOut("0500000199"), true, "local format");
+    assert.strictEqual(monitor.optedOut("972500000199"), true, "no plus");
+    assert.strictEqual(monitor.optedOut("050-000-0199"), true, "with dashes");
+
+    // Adding twice must not grow the list, or a repeated request quietly turns
+    // into a file that grows forever.
+    const twice = monitor.silence(phone, "בדיקה");
+    assert.strictEqual(twice.filter((p) => p.phone.endsWith("500000199")).length, 1, "recorded once");
+
+    assert.strictEqual(monitor.optedOut("+972500000198"), false, "and nobody else is caught by it");
+  } finally {
+    if (before === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, before);
+  }
+});
+
+test("the silence list survives a restart", async () => {
+  // It has to live on disk. Held in memory it would be lost on every deploy, and
+  // a person who asked for quiet would start being written to again a day later
+  // with nobody realising why.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const fnStart = src.indexOf("function silence(");
+  const fn = src.slice(fnStart, src.indexOf("\n}", fnStart));
+  assert.ok(fn.includes("writeFileSync"), "silencing somebody must be written to disk, not just remembered");
+});
+
 test("the clock is the gym's, not Greenwich's", async () => {
   // Render runs in UTC and every "send this at nine" in the code means the gym's
   // morning. Three hours out, the same-day trial reminder arrived at noon for a

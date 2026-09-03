@@ -5,3 +5,5 @@ data/*.json
 renamed.json
 payload.tmp.json
 p*.tmp.json
+
+morning.token

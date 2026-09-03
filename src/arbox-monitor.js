@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const arbox = require("./arbox");
 const whatsapp = require("./whatsapp");
 const store = require("./store");
@@ -268,8 +270,54 @@ async function refreshOptOuts() {
   }
 }
 
+// People Nadav has silenced himself, kept here rather than in Arbox.
+//
+// Arbox has an allow_sms field and it is the right place for this, but its public
+// API is read-only on users - every write verb returns 405 - so somebody who says
+// "stop writing to me" can only be recorded there by hand, in the UI. Waiting for
+// that click is not good enough: the request arrives in the middle of a
+// conversation and the next automation cycle is ten seconds away.
+//
+// So the list lives in a file the bot owns, and survives restarts. Arbox stays
+// the source of truth when it says "no"; this is a second source that can only
+// ever add somebody to the silence, never take them out of it. optedOut()
+// answers the union of the two, so ticking the box in Arbox later changes
+// nothing and contradicts nothing.
+const LOCAL_OPT_OUT_FILE = path.join(store.dataDir, "opt-outs.json");
+
+function readLocalOptOuts() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LOCAL_OPT_OUT_FILE, "utf8"));
+    return Array.isArray(raw.people) ? raw.people : [];
+  } catch {
+    return [];
+  }
+}
+
+// Adding is the only operation. There is deliberately no way to un-silence
+// somebody from code: a person who asked for quiet and got written to anyway is
+// the failure this whole system exists to prevent, and a bug that could undo an
+// entry is a way for it to happen. Reversing it means editing the file by hand,
+// which is slow on purpose.
+function silence(phone, name = "", note = "") {
+  const short = shortPhone(phone);
+  if (short.length < 9) throw new Error(`Not a usable phone number: ${phone}`);
+  const people = readLocalOptOuts();
+  if (!people.some((p) => shortPhone(p.phone) === short)) {
+    people.push({ phone: short, name, note, at: new Date().toISOString() });
+    fs.writeFileSync(LOCAL_OPT_OUT_FILE, JSON.stringify({ people }, null, 2));
+  }
+  return people;
+}
+
+function locallySilenced() {
+  return readLocalOptOuts();
+}
+
 function optedOut(phone) {
-  return optOutCache.phones.has(shortPhone(phone));
+  const short = shortPhone(phone);
+  if (optOutCache.phones.has(short)) return true;
+  return readLocalOptOuts().some((p) => shortPhone(p.phone) === short);
 }
 
 function firstNameOnly(value) {
@@ -1668,6 +1716,8 @@ module.exports = {
   armSilentRun,
   silentRunDone,
   optedOut,
+  silence,
+  locallySilenced,
   refreshOptOuts,
   once,
   ALL_AUTOMATIONS,
