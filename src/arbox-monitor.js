@@ -926,7 +926,18 @@ async function attendancePicture() {
   const people = new Map();
   for (const session of past) {
     for (const r of session.registration_Details || []) {
-      if (r.checked_in !== 1) continue;
+      // A booking counts as having been here, whether or not anybody marked the
+      // check-in.
+      //
+      // This used to require checked_in === 1, which read the field as if it
+      // meant "did not come". It does not: on an ordinary Sunday, fifteen of
+      // forty-one bookings had no check-in against them, and Nadav confirmed
+      // those people trained - nobody had got round to ticking them off. Reading
+      // an unticked box as an absence is what sent "we miss you" to members who
+      // had been in that morning, which is the complaint that started this.
+      //
+      // Booking is the reliable signal here because it is the member's own
+      // action; the check-in is the studio's, and the studio is busy.
       const id = String(r.user_id);
       people.set(id, { name: r.full_name, phone: r.phone });
       if (!lastSeen.has(id) || session.date > lastSeen.get(id)) lastSeen.set(id, session.date);
