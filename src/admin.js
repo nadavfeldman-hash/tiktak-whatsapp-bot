@@ -294,6 +294,14 @@ router.post("/toggle-auto-approve", express.urlencoded({ extended: false }), req
   const list = store.getSettings().autoApproveAutomations || [];
   const next = list.includes(name) ? list.filter((x) => x !== name) : list.concat(name);
   store.setSetting("autoApproveAutomations", next);
+  // Switching it off has to reach backwards. A message stamped "approved" a
+  // minute ago is precisely what somebody flipping this switch means to stop,
+  // and until now nothing could un-stamp it - so the switch went off and
+  // messages kept leaving.
+  if (!next.includes(name)) {
+    const n = require("./outbox").unapproveAutomation(name);
+    if (n) console.log(`Auto-approve off for "${name}": ${n} already-approved messages put back in the queue.`);
+  }
   console.log(`Auto-approve for "${name}" is now ${next.includes(name) ? "ON" : "OFF"}.`);
   res.redirect("/admin/dashboard#automations");
 });

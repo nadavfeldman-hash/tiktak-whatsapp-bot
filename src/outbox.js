@@ -207,7 +207,56 @@ function approveAllPending() {
 }
 
 function rejectAllPending() {
-  return reject(pending().map((i) => i.id));
+  return cancelEverythingUnsent();
+}
+
+// Stop everything that has not actually gone out - including what is already
+// approved.
+//
+// "Reject all" used to call reject(pending()), and pending() deliberately means
+// "waiting for a decision". An approved message is past that point, so it was
+// invisible to the button and setStatus refused to touch it anyway. The button
+// therefore could not stop the one category of message that was about to be
+// sent, which is the only category that matters when somebody hits it.
+//
+// That is not a subtle failure. Nadav turned auto-approve off for every
+// automation, emptied the queue, and was told nothing could go out. Two messages
+// left four minutes later, because they had been stamped approved while
+// auto-approve was still on and nothing afterwards could un-stamp them. He found
+// out from a member, not from the panel.
+//
+// So this stops anything that has not yet been sent, whatever state it reached.
+function cancelEverythingUnsent() {
+  const data = read();
+  let n = 0;
+  for (const item of data.items) {
+    if (item.status === "pending" || item.status === "held" || item.status === "approved") {
+      item.status = "rejected";
+      item.decidedAt = new Date().toISOString();
+      n++;
+    }
+  }
+  write(data);
+  return n;
+}
+
+// Un-approve whatever an automation had queued but not yet sent.
+//
+// Turning auto-approve off has to be retroactive for the same reason: the switch
+// means "stop sending on my behalf", and a message stamped a minute ago is
+// exactly what the person flipping it wants stopped.
+function unapproveAutomation(automation) {
+  const data = read();
+  let n = 0;
+  for (const item of data.items) {
+    if (item.status === "approved" && item.automation === automation) {
+      item.status = "pending";
+      delete item.autoApproved;
+      n++;
+    }
+  }
+  if (n) write(data);
+  return n;
 }
 
 // Drains everything approved. Called on a timer, so approving in the panel
@@ -324,6 +373,8 @@ module.exports = {
   reject,
   approveAllPending,
   rejectAllPending,
+  cancelEverythingUnsent,
+  unapproveAutomation,
   send,
   sweep,
   counts,

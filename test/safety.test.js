@@ -585,6 +585,75 @@ test("a person Nadav silences by hand stays silenced", async () => {
   }
 });
 
+test("\"delete everything\" also stops what is already approved", async () => {
+  // The button called reject(pending()), and pending() means "waiting for a
+  // decision" - so an approved message, the only kind actually about to be sent,
+  // was invisible to it. Nadav emptied the queue, was told nothing could go out,
+  // and two messages left four minutes later.
+  const outbox = require("../src/outbox");
+  const store = require("../src/store");
+  const file = path.join(store.dataDir, "outbox.json");
+  const before = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+
+  try {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        nextId: 9,
+        items: [
+          { id: 1, status: "pending", proposedAt: new Date().toISOString(), to: "972500000001", template: "t", automation: "נעדר מהאימונים" },
+          { id: 2, status: "approved", proposedAt: new Date().toISOString(), to: "972500000002", template: "t", automation: "נעדר מהאימונים" },
+          { id: 3, status: "held", proposedAt: new Date().toISOString(), to: "972500000003", template: "t", automation: "ליד חדש" },
+          { id: 4, status: "sent", proposedAt: new Date().toISOString(), to: "972500000004", template: "t", automation: "ליד חדש" },
+        ],
+      })
+    );
+
+    assert.strictEqual(outbox.waitingToSend().length, 1, "one message is approved and about to go");
+    outbox.rejectAllPending();
+    assert.strictEqual(outbox.waitingToSend().length, 0, "and after 'delete everything' none is");
+    assert.strictEqual(outbox.pending().length, 0, "nothing is left waiting either");
+
+    // What already went out is history and must not be rewritten.
+    const after = JSON.parse(fs.readFileSync(file, "utf8")).items;
+    assert.strictEqual(after.find((i) => i.id === 4).status, "sent", "a sent message stays sent");
+  } finally {
+    if (before === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, before);
+  }
+});
+
+test("turning auto-approve off un-approves what it had already stamped", async () => {
+  // The switch means "stop sending on my behalf". Until now it only applied to
+  // proposals not yet made, so messages approved a minute earlier still left.
+  const outbox = require("../src/outbox");
+  const store = require("../src/store");
+  const file = path.join(store.dataDir, "outbox.json");
+  const before = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+
+  try {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        nextId: 9,
+        items: [
+          { id: 1, status: "approved", autoApproved: true, proposedAt: new Date().toISOString(), to: "972500000001", template: "t", automation: "נעדר מהאימונים" },
+          { id: 2, status: "approved", proposedAt: new Date().toISOString(), to: "972500000002", template: "t", automation: "ליד חדש" },
+        ],
+      })
+    );
+
+    const n = outbox.unapproveAutomation("נעדר מהאימונים");
+    assert.strictEqual(n, 1, "its own approved message is taken back");
+    const items = JSON.parse(fs.readFileSync(file, "utf8")).items;
+    assert.strictEqual(items.find((i) => i.id === 1).status, "pending", "and now waits for a human");
+    assert.strictEqual(items.find((i) => i.id === 2).status, "approved", "another automation is left alone");
+  } finally {
+    if (before === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, before);
+  }
+});
+
 test("the silence list survives a restart", async () => {
   // It has to live on disk. Held in memory it would be lost on every deploy, and
   // a person who asked for quiet would start being written to again a day later
