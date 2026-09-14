@@ -1033,6 +1033,36 @@ async function checkAbsences() {
     return;
   }
 
+  // Only people who actually train here now.
+  //
+  // The attendance picture is built from the registrations on past sessions, so
+  // it contains everybody who ever booked one: members who left, a trial visitor
+  // from four weeks ago, somebody whose membership lapsed in the spring. None of
+  // them are "absent" - they are gone, and telling a stranger we miss them is
+  // worse than saying nothing.
+  //
+  // Nadav caught this: אנפה was in the queue and has no membership at all. The
+  // birthday check has always cross-referenced the member list; this one never
+  // did.
+  const activeIds = new Set();
+  const activePhones = new Set();
+  try {
+    for (const m of await arbox.getAllActiveMembers()) {
+      if (m.user_fk) activeIds.add(String(m.user_fk));
+      if (m.user_id) activeIds.add(String(m.user_id));
+      if (m.id) activeIds.add(String(m.id));
+      const p = String(m.phone || "").replace(/\D/g, "").slice(-9);
+      if (p.length === 9) activePhones.add(p);
+    }
+  } catch (e) {
+    events.failure("נעדר מהאימונים", `לא ניתן לאמת מי מתאמן פעיל (${e.message.slice(0, 60)}) - מדלג`);
+    return;
+  }
+  if (activeIds.size === 0 && activePhones.size === 0) {
+    events.failure("נעדר מהאימונים", "רשימת המתאמנים חזרה ריקה - מדלג על הסבב");
+    return;
+  }
+
   // Everyone currently mid-absence, and which stage they are in.
   const due = [];
   for (const [id, date] of lastSeen) {
@@ -1045,6 +1075,20 @@ async function checkAbsences() {
     const person = people.get(id) || {};
     const phone = usablePhone(person.phone);
     if (!phone) continue;
+    // The id in a registration and the id on a member record are not always the
+    // same field, so the phone is checked too - either one being a current
+    // member is enough, and neither matching means they are not one.
+    const tail = phone.slice(-9);
+    if (!activeIds.has(String(id)) && !activePhones.has(tail)) {
+      events.decision({
+        automation: "נעדר מהאימונים",
+        person: (person.name || "").split(" ")[0],
+        phone,
+        outcome: "לא נשלח",
+        reason: "כבר לא מתאמן אצלנו",
+      });
+      continue;
+    }
     due.push({ id, stage, daysAgo, phone, name: (person.name || "").split(" ")[0] });
   }
 

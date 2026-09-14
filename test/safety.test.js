@@ -654,6 +654,33 @@ test("turning auto-approve off un-approves what it had already stamped", async (
   }
 });
 
+test("somebody who no longer trains here is not told we miss them", async () => {
+  // The attendance picture is built from registrations on past sessions, so it
+  // holds everyone who ever booked one - lapsed members, a trial visitor from a
+  // month ago. Nadav found אנפה in the queue; she has no membership at all.
+  // The birthday check has always cross-referenced the member list. This one did
+  // not, so the guard has to be visible in the code that builds the list.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const start = src.indexOf("async function checkAbsences");
+  const fn = src.slice(start, src.indexOf("\nasync function", start + 10));
+
+  assert.ok(
+    fn.includes("getAllActiveMembers"),
+    "the absence check must look up who is actually a member"
+  );
+  assert.ok(
+    /activeIds\.has|activePhones\.has/.test(fn),
+    "and every candidate must be tested against that list before being queued"
+  );
+  // Failing closed matters more than usual here: an empty member list would
+  // otherwise mean "nobody is a member", which passes the test above while
+  // silencing the automation, or worse, inverts it.
+  assert.ok(
+    fn.includes("activeIds.size === 0"),
+    "an empty or failed member lookup must skip the round, not message everybody"
+  );
+});
+
 test("the silence list survives a restart", async () => {
   // It has to live on disk. Held in memory it would be lost on every deploy, and
   // a person who asked for quiet would start being written to again a day later
