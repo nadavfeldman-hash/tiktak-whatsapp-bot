@@ -681,6 +681,36 @@ test("somebody who no longer trains here is not told we miss them", async () => 
   );
 });
 
+test("every automation aimed at members checks that they still are one", async () => {
+  // Two separate groups, and mixing them up is what went wrong. The lead checks
+  // are supposed to write to people who are not members - that is their whole
+  // job. The member checks are not, and two of them were doing it anyway:
+  // checkAbsences queued "we miss you" to אנפה and Guy, who had both left, and
+  // checkLateCancellations would have called a prospect who dropped a trial
+  // session a נקניקיה.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "arbox-monitor.js"), "utf8");
+  const FOR_MEMBERS = [
+    "checkAbsences",
+    "checkBirthdays",
+    "checkNewMemberCheckins",
+    "checkLateCancellations",
+  ];
+
+  const missing = [];
+  for (const name of FOR_MEMBERS) {
+    const start = src.indexOf(`async function ${name}`);
+    assert.ok(start !== -1, `${name} should exist`);
+    const next = src.indexOf("\nasync function", start + 10);
+    const fn = src.slice(start, next === -1 ? undefined : next);
+    if (!fn.includes("getAllActiveMembers")) missing.push(name);
+  }
+  assert.deepStrictEqual(
+    missing,
+    [],
+    "these write to members without checking anybody is still one: " + missing.join(", ")
+  );
+});
+
 test("the silence list survives a restart", async () => {
   // It has to live on disk. Held in memory it would be lost on every deploy, and
   // a person who asked for quiet would start being written to again a day later

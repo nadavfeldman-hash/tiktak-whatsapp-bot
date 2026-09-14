@@ -1494,6 +1494,36 @@ async function checkLateCancellations() {
     group_by: "user",
   });
   const cancellations = result.data || [];
+
+  // Only people who actually train here.
+  //
+  // The cancellation report covers every booking that was dropped, and plenty of
+  // those belong to somebody who is not a member: a prospect who cancelled their
+  // trial, a membership that has since lapsed. "יא נקניקיה, ביטלת ולא נרשמת" is
+  // written for a member being teased by their own gym. To a stranger who thought
+  // better of a trial session it is an insult from a business they never joined.
+  //
+  // Same shape as the guard in checkAbsences, and for the same reason - that one
+  // was queueing "we miss you" to two people who had left.
+  const activeIds = new Set();
+  const activePhones = new Set();
+  try {
+    for (const m of await arbox.getAllActiveMembers()) {
+      if (m.user_fk) activeIds.add(String(m.user_fk));
+      if (m.user_id) activeIds.add(String(m.user_id));
+      if (m.id) activeIds.add(String(m.id));
+      const p = String(m.phone || "").replace(/\D/g, "").slice(-9);
+      if (p.length === 9) activePhones.add(p);
+    }
+  } catch (e) {
+    events.failure("ביטול בלי הרשמה מחדש", `לא ניתן לאמת מי מתאמן פעיל (${e.message.slice(0, 60)}) - מדלג`);
+    return;
+  }
+  if (activeIds.size === 0 && activePhones.size === 0) {
+    events.failure("ביטול בלי הרשמה מחדש", "רשימת המתאמנים חזרה ריקה - מדלג על הסבב");
+    return;
+  }
+
   const now = new Date();
   let changed = false;
   // One lookup per affected date, not per cancellation.
@@ -1502,6 +1532,18 @@ async function checkLateCancellations() {
   for (const c of cancellations) {
     if (c.cancelled_by !== "user") continue; // staff-initiated cancellations aren't the customer's fault
     if (!c.phone || !c.date) continue;
+
+    const tail = String(c.phone).replace(/\D/g, "").slice(-9);
+    if (!activeIds.has(String(c.user_id)) && !activePhones.has(tail)) {
+      events.decision({
+        automation: "ביטול בלי הרשמה מחדש",
+        person: c.first_name || "",
+        phone: c.phone,
+        outcome: "לא נשלח",
+        reason: "לא מתאמן פעיל אצלנו",
+      });
+      continue;
+    }
     const key = `${c.user_id}:${c.schedule_id}`;
     if (notifiedKeys.has(key)) continue;
 
