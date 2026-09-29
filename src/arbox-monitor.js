@@ -738,8 +738,17 @@ async function findTrialRegistrations(dateStr) {
   return registrations;
 }
 
-const TRIAL_REMINDER_DAY_BEFORE_HOUR = 19; // evening before
-const TRIAL_REMINDER_SAME_DAY_HOUR = 9; // morning of
+const TRIAL_REMINDER_DAY_BEFORE_HOUR = 19; // evening before, for morning sessions
+const TRIAL_REMINDER_SAME_DAY_HOUR = 9; // morning of, for afternoon/evening sessions
+
+// Sessions before noon get their one reminder the evening before, since a
+// same-day-morning check run at 9am would otherwise nudge someone about a
+// class that already started (or already happened) by the time it fires.
+const MORNING_SESSION_CUTOFF_HOUR = 12;
+function isMorningSession(startTime) {
+  const hour = Number(String(startTime || "").slice(0, 2));
+  return !isNaN(hour) && hour < MORNING_SESSION_CUTOFF_HOUR;
+}
 
 // Confirm a trial the moment it is booked.
 //
@@ -814,11 +823,17 @@ async function checkTrialReminders() {
   const currentHour = new Date().getHours();
   let changed = false;
 
-  const sendFor = async (dateStr, tag, hourGate) => {
+  // wantMorning picks out only the sessions this pass is responsible for, so a
+  // booking is only ever eligible for one of the two passes below - never both,
+  // and never neither.
+  const sendFor = async (dateStr, tag, hourGate, wantMorning) => {
     if (currentHour < hourGate) return;
     const registrations = await findTrialRegistrations(dateStr);
     for (const { session, reg } of registrations) {
-      const key = `${session.schedule_id}:${reg.user_id}:${tag}`;
+      if (isMorningSession(session.start_time) !== wantMorning) continue;
+      // One key per booking, not per tag - a booking gets exactly one reminder,
+      // ever, whichever pass it belongs to.
+      const key = `${session.schedule_id}:${reg.user_id}`;
       if (sentKeys.has(key)) continue;
       if (!reg.phone) continue;
       // The evening-before message carries the full briefing (what to bring,
@@ -841,8 +856,10 @@ async function checkTrialReminders() {
   tomorrow.setDate(tomorrow.getDate() + 1);
   const fmt = (d) => d.toISOString().slice(0, 10);
 
-  await sendFor(fmt(tomorrow), "day_before", TRIAL_REMINDER_DAY_BEFORE_HOUR);
-  await sendFor(fmt(today), "same_day", TRIAL_REMINDER_SAME_DAY_HOUR);
+  // Morning sessions tomorrow: reminded tonight.
+  await sendFor(fmt(tomorrow), "day_before", TRIAL_REMINDER_DAY_BEFORE_HOUR, true);
+  // Afternoon/evening sessions today: reminded this morning.
+  await sendFor(fmt(today), "same_day", TRIAL_REMINDER_SAME_DAY_HOUR, false);
 
   if (changed) {
     store.setArboxState({ sentTrialReminderKeys: Array.from(sentKeys) });
