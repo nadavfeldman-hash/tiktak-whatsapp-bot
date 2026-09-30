@@ -892,6 +892,20 @@ function absenceStage(daysAgo) {
   return stage;
 }
 
+// The studio runs Friday morning but is closed Saturday, so a gap that spans
+// only a Friday-to-Sunday weekend shouldn't count as two missed days - just
+// one. Every Saturday between the last-seen date and today is dropped from
+// the count; every other day (including Friday) still counts normally.
+function daysAbsentExcludingSaturday(fromDate, toDate) {
+  let days = 0;
+  const d = new Date(fromDate);
+  while (d < toDate) {
+    d.setDate(d.getDate() + 1);
+    if (d.getDay() !== 6) days++;
+  }
+  return days;
+}
+
 // Who has stopped coming, worked out from attendance.
 //
 // This used to read Arbox's absenceReport, and that was simply the wrong list:
@@ -1083,7 +1097,7 @@ async function checkAbsences() {
   // Everyone currently mid-absence, and which stage they are in.
   const due = [];
   for (const [id, date] of lastSeen) {
-    const daysAgo = Math.round((today - new Date(date)) / 86400000);
+    const daysAgo = daysAbsentExcludingSaturday(new Date(date), today);
     const stage = absenceStage(daysAgo);
     if (stage === null) continue;
     if (booked.has(id)) continue;
