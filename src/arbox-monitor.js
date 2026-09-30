@@ -128,14 +128,14 @@ function renderTemplate(name, params) {
 // Plain Hebrew for the queue, so the panel says why somebody is about to be
 // written to rather than naming a template.
 const TEMPLATE_LABELS = {
-  new_lead_details_request_v2: "ליד חדש",
-  lead_no_response_1_v2: "שינוי סטטוס ליד",
-  lead_no_response_2: "שינוי סטטוס ליד",
-  lead_no_response_3_v2: "שינוי סטטוס ליד",
+  new_lead_details_request_v3: "ליד חדש",
+  lead_no_response_1_v3: "שינוי סטטוס ליד",
+  lead_no_response_2_v2: "שינוי סטטוס ליד",
+  lead_no_response_3_v4: "שינוי סטטוס ליד",
   lost_lead_goodbye_v2: "ליד אבוד",
   welcome_new_member_v2: "מצטרף חדש",
-  new_member_checkin_v2: "צ׳ק-אין מצטרף חדש",
-  trial_booking_confirmed: "נרשם לאימון ניסיון",
+  new_member_checkin_v3: "צ׳ק-אין מצטרף חדש",
+  trial_booking_confirmed_v2: "נרשם לאימון ניסיון",
   trial_reminder_day_before_v2: "תזכורת אימון ניסיון",
   trial_reminder_same_day_v2: "תזכורת אימון ניסיון",
   birthday_greeting_1_v2: "יום הולדת",
@@ -428,7 +428,7 @@ async function checkNewLeads() {
     // just been written to by hand.
     if (customerAutomationsEnabled() && lead.phone && isAfterGoLive(lead.created_time)) {
       try {
-        await queueMessage(lead.phone.replace("+", ""), "new_lead_details_request_v2", [
+        await queueMessage(lead.phone.replace("+", ""), "new_lead_details_request_v3", [
           lead.first_name || "",
         ]);
         await sleep(PACE_MS);
@@ -796,7 +796,7 @@ async function checkTrialBookings() {
     if (confirmed.has(key)) continue;
 
     if (!firstRun && reg.phone && isAfterGoLive(reg.booking_time)) {
-      await queueMessage(reg.phone.replace("+", ""), "trial_booking_confirmed", [
+      await queueMessage(reg.phone.replace("+", ""), "trial_booking_confirmed_v2", [
         (reg.full_name || "").split(" ")[0],
         hebrewWhen(session.date),
         String(session.start_time || "").slice(0, 5),
@@ -1152,7 +1152,7 @@ async function checkAbsences() {
   }
 }
 
-const LEAD_NO_RESPONSE_TEMPLATES = ["lead_no_response_1_v2", "lead_no_response_2", "lead_no_response_3_v2"];
+const LEAD_NO_RESPONSE_TEMPLATES = ["lead_no_response_1_v3", "lead_no_response_2_v2", "lead_no_response_3_v4"];
 
 // Arbox tracks follow-up attempts as sequential statuses: "ללא מענה 1", "ללא
 // מענה 2", "ללא מענה 3" - each stage should get its matching, progressively
@@ -1670,7 +1670,7 @@ async function checkNewMemberCheckins() {
       const key = `${member.user_id}:${milestone}`;
       if (sentKeys.has(key)) continue;
 
-      await queueMessage(member.phone.replace("+", ""), "new_member_checkin_v2", [
+      await queueMessage(member.phone.replace("+", ""), "new_member_checkin_v3", [
         member.first_name || "",
         String(Math.round(milestone / 7)),
       ]);
