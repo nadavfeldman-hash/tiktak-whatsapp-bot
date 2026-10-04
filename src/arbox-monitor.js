@@ -397,10 +397,10 @@ function customerAutomationsEnabled() {
   return !!store.getSettings().customerAutomationsEnabled;
 }
 
-function formatLeadAlert(lead) {
+function leadAlertParams(lead) {
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "(ללא שם)";
   const phone = lead.phone || "לא צוין טלפון";
-  return `🔔 ליד חדש ב-ARBOX!\n${name}\nטלפון: ${phone}\nמקור: ${lead.lead_source || "לא ידוע"}\nסטטוס: ${lead.lead_status || "לא ידוע"}`;
+  return [name, phone];
 }
 
 async function checkNewLeads() {
@@ -420,7 +420,7 @@ async function checkNewLeads() {
 
   for (const lead of newLeads) {
     if (isFirstRun) break; // don't spam alerts for existing history on first run ever
-    await whatsapp.sendText(ADMIN_PHONE, formatLeadAlert(lead));
+    await whatsapp.sendOwnerTemplate(ADMIN_PHONE, "owner_new_lead_alert", leadAlertParams(lead));
 
     // Same go-live rule as every other automation: only leads created after we
     // switched on get an automatic welcome. Without this, turning automations on
@@ -504,8 +504,8 @@ async function checkAttendanceReport() {
   store.setArboxState({ lastAttendanceReportDate: today });
 }
 
-function formatTaskAlert(task) {
-  return `✅ תזכורת למשימה:\nלקוח: ${task.full_name || "לא ידוע"} | ${task.phone || "אין טלפון"}\nסוג: ${task.task_type || "כללי"}\n${task.description || ""}`;
+function taskAlertParams(task) {
+  return [task.full_name || "לא ידוע", task.phone || "אין טלפון", task.task_type || "כללי"];
 }
 
 async function checkDueTasks() {
@@ -538,7 +538,7 @@ async function checkDueTasks() {
   );
 
   for (const task of dueTasks) {
-    await whatsapp.sendText(ADMIN_PHONE, formatTaskAlert(task));
+    await whatsapp.sendOwnerTemplate(ADMIN_PHONE, "owner_task_reminder", taskAlertParams(task));
     sentIds.add(String(task.task_id));
   }
 

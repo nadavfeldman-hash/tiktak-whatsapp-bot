@@ -186,6 +186,62 @@ async function sendTemplate(to, templateName, params = [], options = {}) {
   return res;
 }
 
+// For alerts to Nadav himself (new lead, task due), not to customers.
+//
+// sendTemplate's skipReason exists to stop a customer hearing from five
+// automations in one day - it dedups by template name per week and by person
+// per 24h. Routed through that, a second lead on the same day would be
+// silently dropped as "already messaged this person within 24h". Nadav wants
+// every one, so this skips skipReason entirely while keeping quiet-hours (do
+// not wake him) and the fuse (still a backstop against a runaway loop).
+async function sendOwnerTemplate(to, templateName, params = []) {
+  const quiet = require("./quiet-hours").holdReason();
+  if (quiet) {
+    console.log(`Holding ${templateName} to ${to}: ${quiet}`);
+    return null;
+  }
+
+  const blocked = fuse.blockReason();
+  if (blocked) {
+    console.error(`Blocked ${templateName} to ${to}: ${blocked}`);
+    return null;
+  }
+
+  if (shadowMode()) {
+    console.log(`[SHADOW] would send ${templateName} to ${to} [${params.join(" | ")}]`);
+    return null;
+  }
+
+  const res = await fetch(apiUrl(), {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: "he" },
+        components:
+          params.length > 0
+            ? [{ type: "body", parameters: params.map((text) => ({ type: "text", text: String(text) })) }]
+            : [],
+      },
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("WhatsApp owner template send failed:", res.status, errText);
+    throw new Error(`WhatsApp owner template send failed: ${res.status} ${errText}`);
+  }
+  recordSent(to, templateName);
+  fuse.record();
+  return res;
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Sends each non-empty line as its own WhatsApp message, with a short pause
@@ -230,6 +286,7 @@ function extractIncomingText(body) {
 module.exports = {
   sendText,
   sendTemplate,
+  sendOwnerTemplate,
   sendBurst,
   markAsRead,
   extractIncomingText,
