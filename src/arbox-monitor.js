@@ -448,15 +448,6 @@ async function checkNewLeads() {
 
 const DEBT_REPORT_HOUR = 9; // sends once, the first time the monitor runs at/after this local hour each day
 
-function formatDebtReport(entries) {
-  const withDebt = entries.filter((e) => Number(e.debt) > 0);
-  if (withDebt.length === 0) return "💰 דוח חובות יומי: אין כרגע אף אחד עם חוב פתוח 🙌";
-
-  const lines = withDebt.map((e) => `- ${e.full_name}: ${e.debt}₪ (${e.item_name || "לא ידוע"}) | ${e.phone || "אין טלפון"}`);
-  const total = withDebt.reduce((sum, e) => sum + Number(e.debt), 0);
-  return `💰 דוח חובות יומי (${withDebt.length} לקוחות, סה"כ ${total}₪):\n${lines.join("\n")}`;
-}
-
 async function checkDebtReport() {
   if (!ADMIN_PHONE || !process.env.ARBOX_API_KEY) return;
 
@@ -467,8 +458,15 @@ async function checkDebtReport() {
   if (state.lastDebtReportDate === today || currentHour < DEBT_REPORT_HOUR) return;
 
   const result = await arbox.getReport("debtReport", { limit: 200 });
-  const message = formatDebtReport(result.data || []);
-  await whatsapp.sendText(ADMIN_PHONE, message);
+  const withDebt = (result.data || []).filter((e) => Number(e.debt) > 0);
+  const total = withDebt.reduce((sum, e) => sum + Number(e.debt), 0);
+  // A free-text list of debtors has no fixed shape, so it cannot be a WhatsApp
+  // template - this sends the summary only, through the same owner channel as
+  // every other admin alert; the names and amounts are in Arbox.
+  await whatsapp.sendOwnerTemplate(ADMIN_PHONE, "owner_debt_report", [
+    String(withDebt.length),
+    String(total),
+  ]);
 
   store.setArboxState({ lastDebtReportDate: today });
 }
@@ -498,8 +496,11 @@ async function checkAttendanceReport() {
   const totalRegistrations = sessions.reduce((sum, s) => sum + Number(s.registration_count || 0), 0);
   const sessionsWithPeople = sessions.filter((s) => Number(s.registration_count) > 0).length;
 
-  const message = `📋 דוח נוכחות יומי (${today}):\n${totalRegistrations} הרשמות לאימונים, פרוסות על ${sessionsWithPeople} שיעורים.`;
-  await whatsapp.sendText(ADMIN_PHONE, message);
+  await whatsapp.sendOwnerTemplate(ADMIN_PHONE, "owner_attendance_report", [
+    today,
+    String(totalRegistrations),
+    String(sessionsWithPeople),
+  ]);
 
   store.setArboxState({ lastAttendanceReportDate: today });
 }
@@ -590,7 +591,11 @@ async function checkBirthdays() {
 
   for (const person of people) {
     const template = BIRTHDAY_TEMPLATES[Math.floor(Math.random() * BIRTHDAY_TEMPLATES.length)];
-    await queueMessage(person.phone.replace("+", ""), template, [person.first_name]);
+    try {
+      await queueMessage(person.phone.replace("+", ""), template, [person.first_name]);
+    } catch (e) {
+      events.failure("יום הולדת", `ברכה ל${person.first_name || person.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+    }
     await sleep(PACE_MS);
   }
 
@@ -665,9 +670,13 @@ async function checkNewMembers() {
     if (welcomed.has(String(c.user_id))) continue;
     if (!isFirstRun && c.phone) {
       // Converting a lead to a member is likewise Nadav's own doing.
-      await queueMessage(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name], {
-        deliberate: true,
-      });
+      try {
+        await queueMessage(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name], {
+          deliberate: true,
+        });
+      } catch (e) {
+        events.failure("מצטרף חדש", `ברכת הצטרפות ל${c.first_name || c.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+      }
       await sleep(PACE_MS);
     }
     welcomed.add(String(c.user_id));
@@ -703,9 +712,13 @@ async function checkLostLeads() {
       // Marking a lead lost is Nadav closing that file himself, the same kind of
       // deliberate act as moving a status - so it is not held back by the
       // blanket protection, only by the no-repeats rule.
-      await queueMessage(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name], {
-        deliberate: true,
-      });
+      try {
+        await queueMessage(c.phone.replace("+", ""), "lost_lead_goodbye_v2", [c.first_name], {
+          deliberate: true,
+        });
+      } catch (e) {
+        events.failure("ליד אבוד", `פרידה מ${c.first_name || c.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+      }
       await sleep(PACE_MS);
     }
     saidGoodbye.add(String(c.user_id));
@@ -796,11 +809,23 @@ async function checkTrialBookings() {
     if (confirmed.has(key)) continue;
 
     if (!firstRun && reg.phone && isAfterGoLive(reg.booking_time)) {
-      await queueMessage(reg.phone.replace("+", ""), "trial_booking_confirmed_v2", [
-        (reg.full_name || "").split(" ")[0],
-        hebrewWhen(session.date),
-        String(session.start_time || "").slice(0, 5),
-      ]);
+      // A booking's session date eventually falls out of the lookahead window,
+      // so a key never marked confirmed here is never looked at again. One bad
+      // send used to throw out of the whole loop before this key was added -
+      // losing not just this person's confirmation, silently and permanently,
+      // but everyone still waiting behind them in the same run too.
+      try {
+        await queueMessage(reg.phone.replace("+", ""), "trial_booking_confirmed_v2", [
+          (reg.full_name || "").split(" ")[0],
+          hebrewWhen(session.date),
+          String(session.start_time || "").slice(0, 5),
+        ]);
+      } catch (e) {
+        events.failure(
+          "נרשם לאימון ניסיון",
+          `אישור ל${reg.full_name || reg.phone} נכשל (${e.message.slice(0, 60)}) - ממשיך לבא בתור`
+        );
+      }
     }
     confirmed.add(key);
     changed = true;
@@ -840,11 +865,23 @@ async function checkTrialReminders() {
       // the Waze address); on the day itself it's just a short nudge.
       const template =
         tag === "day_before" ? "trial_reminder_day_before_v2" : "trial_reminder_same_day_v2";
-      await queueMessage(reg.phone.replace("+", ""), template, [
-        reg.full_name || "",
-        session.session_name || "אימון",
-        session.start_time || "",
-      ]);
+      // The day-before pass only ever looks at tomorrow, and the same-day pass
+      // only at today - neither comes back to try again later. A send that
+      // threw here used to abort the pass before this key was added, which
+      // silently cost this person their one shot at a reminder and dropped
+      // everyone still waiting behind them in the same pass too.
+      try {
+        await queueMessage(reg.phone.replace("+", ""), template, [
+          reg.full_name || "",
+          session.session_name || "אימון",
+          session.start_time || "",
+        ]);
+      } catch (e) {
+        events.failure(
+          "תזכורת אימון ניסיון",
+          `תזכורת ל${reg.full_name || reg.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`
+        );
+      }
       await sleep(PACE_MS);
       sentKeys.add(key);
       changed = true;
@@ -1120,7 +1157,7 @@ async function checkAbsences() {
       });
       continue;
     }
-    due.push({ id, stage, daysAgo, phone, name: (person.name || "").split(" ")[0] });
+    due.push({ id, stage, daysAgo, phone, name: (person.name || "").split(" ")[0], lastSeenDate: date });
   }
 
   // Starting from today, by Nadav's decision. Forty-two people are mid-absence
@@ -1134,7 +1171,7 @@ async function checkAbsences() {
       // Every stage up to and including their current one, so a person eight
       // days absent today does not receive the fourteen-day message next week
       // for an absence that began before we were watching.
-      for (let s = 0; s <= d.stage; s++) notifiedKeys.add(`${d.id}:${s}`);
+      for (let s = 0; s <= d.stage; s++) notifiedKeys.add(`${d.id}:${s}:${d.lastSeenDate}`);
     }
     store.setArboxState({
       notifiedAbsenceKeys: Array.from(notifiedKeys),
@@ -1146,7 +1183,10 @@ async function checkAbsences() {
 
   let changed = false;
   for (const d of due) {
-    const key = `${d.id}:${d.stage}`;
+    // The anchor is this absence's start, not just the stage - so a person who
+    // came back and left again gets a fresh set of keys instead of staying
+    // silenced forever by a stage they used up during their last absence.
+    const key = `${d.id}:${d.stage}:${d.lastSeenDate}`;
     if (notifiedKeys.has(key)) continue;
 
     const variants = ABSENCE_STAGES[d.stage].templates;
@@ -1155,7 +1195,15 @@ async function checkAbsences() {
     const params =
       template === "absence_reminder_3" ? [d.name, String(d.daysAgo)] : [d.name];
 
-    const r = await queueMessage(d.phone, template, params);
+    let r;
+    try {
+      r = await queueMessage(d.phone, template, params);
+    } catch (e) {
+      // One bad send used to abort the whole pass before anything was saved,
+      // silently losing every decision made before it this run too.
+      events.failure("נעדר מהאימונים", `שליחה ל${d.name} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+      continue;
+    }
     if (r === null) continue; // blocked by a guard - do not retire the reminder
     notifiedKeys.add(key);
     changed = true;
@@ -1265,12 +1313,18 @@ async function checkLeadNoResponse() {
     // Nadav moved this lead's status himself, so it is a deliberate act rather
     // than an automation's own inference - it is not held back by the blanket
     // protection or the daily cooldown, only by the no-repeats rule.
-    const result = await queueMessage(
-      lead.phone.replace("+", ""),
-      template,
-      [lead.first_name || ""],
-      { deliberate: true }
-    );
+    let result;
+    try {
+      result = await queueMessage(
+        lead.phone.replace("+", ""),
+        template,
+        [lead.first_name || ""],
+        { deliberate: true }
+      );
+    } catch (e) {
+      events.failure("שינוי סטטוס ליד", `הודעה ל${lead.first_name || lead.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+      continue;
+    }
     // sendTemplate returns null when a guard blocked it - typically the
     // per-person daily cooldown. Marking that as "notified" would retire the
     // message permanently, so the lead would never hear from us even once the
@@ -1394,7 +1448,11 @@ async function checkAttendanceTrends() {
       template === "attendance_trend_steady"
         ? [info.name || "", String(currentCount)]
         : [info.name || "", String(previousCount), String(currentCount)];
-    await queueMessage(info.phone.replace("+", ""), template, params);
+    try {
+      await queueMessage(info.phone.replace("+", ""), template, params);
+    } catch (e) {
+      events.failure("מגמות נוכחות", `הודעה ל${info.name || info.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+    }
     await sleep(PACE_MS);
   }
 
@@ -1419,12 +1477,16 @@ async function checkCoachTrialNotices() {
   for (const { session, reg } of registrations) {
     const coachPhone = session.staff_member?.phone;
     if (!coachPhone) continue;
-    await queueMessage(coachPhone.replace("+", ""), "coach_trial_notice_morning", [
-      session.staff_member.name || "",
-      session.session_name || "אימון",
-      session.start_time || "",
-      reg.full_name || "",
-    ]);
+    try {
+      await queueMessage(coachPhone.replace("+", ""), "coach_trial_notice_morning", [
+        session.staff_member.name || "",
+        session.session_name || "אימון",
+        session.start_time || "",
+        reg.full_name || "",
+      ]);
+    } catch (e) {
+      events.failure("עדכון למאמן", `הודעה ל${session.staff_member.name || coachPhone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+    }
     await sleep(PACE_MS);
   }
 
@@ -1590,15 +1652,20 @@ async function checkLateCancellations() {
     // They rebooked that same day - nothing to say.
     if (registeredByDate.get(c.date).has(String(c.user_id))) continue;
 
-    const r = await queueMessage(c.phone.replace("+", ""), "late_cancellation_callout", [
-      c.first_name || "",
-      c.class_name || "אימון",
-      // The template has two blanks; this call was passing three. WhatsApp
-      // rejects a template whose parameter count does not match, so every one of
-      // these failed - silently, since a rejected send just throws into a catch.
-      // The automation looked switched on and working and had never delivered a
-      // single message.
-    ]);
+    let r;
+    try {
+      r = await queueMessage(c.phone.replace("+", ""), "late_cancellation_callout", [
+        c.first_name || "",
+        c.class_name || "אימון",
+        // The template has two blanks; this call was passing three. WhatsApp
+        // rejects a template whose parameter count does not match, so every one of
+        // these failed - silently, since a rejected send just threw into a catch
+        // (now logged) one scope out, aborting everyone still behind them too.
+      ]);
+    } catch (e) {
+      events.failure("ביטול בלי הרשמה מחדש", `הודעה ל${c.first_name || c.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+      continue;
+    }
     if (r === null) continue;
     await sleep(PACE_MS);
     notifiedKeys.add(key);
@@ -1646,10 +1713,17 @@ async function checkStreaks() {
     streaks[key] = { streak: newStreak, name: info.name, phone: info.phone };
 
     if (STREAK_MILESTONES.includes(newStreak)) {
-      await queueMessage(info.phone.replace("+", ""), "streak_milestone_v2", [
-        info.name || "",
-        String(newStreak),
-      ]);
+      // This runs once a week over everyone's count at once, with a single
+      // save at the end - a throw here used to lose every streak update
+      // computed so far this week, for everyone, not just this one send.
+      try {
+        await queueMessage(info.phone.replace("+", ""), "streak_milestone_v2", [
+          info.name || "",
+          String(newStreak),
+        ]);
+      } catch (e) {
+        events.failure("רצף אימונים", `ברכת רצף ל${info.name || info.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+      }
       await sleep(PACE_MS);
     }
   }
@@ -1684,10 +1758,14 @@ async function checkNewMemberCheckins() {
       const key = `${member.user_id}:${milestone}`;
       if (sentKeys.has(key)) continue;
 
-      await queueMessage(member.phone.replace("+", ""), "new_member_checkin_v3", [
-        member.first_name || "",
-        String(Math.round(milestone / 7)),
-      ]);
+      try {
+        await queueMessage(member.phone.replace("+", ""), "new_member_checkin_v3", [
+          member.first_name || "",
+          String(Math.round(milestone / 7)),
+        ]);
+      } catch (e) {
+        events.failure("צ׳ק-אין מצטרף חדש", `הודעה ל${member.first_name || member.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
+      }
       await sleep(PACE_MS);
       sentKeys.add(key);
       changed = true;

@@ -13,7 +13,7 @@
 
 // Nights. Deliberately wide at both ends: nobody thanks a gym for a message at
 // half past six.
-const NIGHT_START_HOUR = 21; // from 21:00
+const NIGHT_START_HOUR = 20; // from 20:00 - Nadav's own customer-service hours end there
 const NIGHT_END_HOUR = 8; // until 08:00
 
 // Shabbat. Its real start moves through the year - about 16:15 in December,
