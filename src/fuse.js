@@ -33,8 +33,12 @@ const DAY_MS = 24 * HOUR_MS;
 // prevent put forty-six messages out in three seconds. A fuse that trips during
 // normal work gets resented and then ignored, and an ignored fuse protects
 // nobody.
-const MAX_PER_HOUR = 20;
-const MAX_PER_DAY = 60;
+// Overridable for a one-off approved broadcast (e.g. an urgent schedule change
+// that has to reach everyone the same day) - Nadav raises these by hand in
+// Render for the day and brings them back down afterward. Unset, nothing
+// changes from the defaults below.
+const MAX_PER_HOUR = Number(process.env.FUSE_MAX_PER_HOUR) || 20;
+const MAX_PER_DAY = Number(process.env.FUSE_MAX_PER_DAY) || 60;
 
 function fuseState() {
   return store.getArboxState().fuse || {};
