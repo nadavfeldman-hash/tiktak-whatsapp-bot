@@ -644,36 +644,90 @@ async function checkFailedPayments() {
   }
 }
 
+// How far ahead to look for a brand-new member's first booked session, so the
+// welcome message can tell them when and where it is rather than just "see you
+// soon".
+const NEW_MEMBER_SESSION_LOOKAHEAD_DAYS = 14;
+
+async function nextBookedSessionForPhone(phone) {
+  const target = shortPhone(phone);
+  if (target.length < 9) return null;
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const day = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return fmt(d);
+  };
+  for (let i = 0; i <= NEW_MEMBER_SESSION_LOOKAHEAD_DAYS; i++) {
+    const dateStr = day(i);
+    const result = await arbox.getSchedule({
+      from_date: dateStr,
+      to_date: dateStr,
+      limit: 200,
+      registration_details: "1",
+    });
+    for (const session of result.data || []) {
+      for (const reg of session.registration_Details || []) {
+        if (shortPhone(reg.phone) === target && !reg.cancelled_time) {
+          return { date: session.date, start_time: session.start_time, session_name: session.session_name };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function checkNewMembers() {
   if (!customerAutomationsEnabled() || !process.env.ARBOX_API_KEY) return;
   if (!watching("מצטרף חדש")) return;
 
   const state = store.getArboxState();
   // Tracked as a set of people already welcomed rather than "the highest user_id
-  // seen so far". Arbox returns converted leads unordered, and a user_id is
-  // assigned when the lead is first created, not when they join - so a
-  // long-standing lead who signs up today carries an old, low id, falls under
-  // any high-water mark, and is never welcomed at all. A silent miss, which is
-  // exactly the kind that goes unnoticed.
+  // seen so far". Arbox returns members unordered, and a user_id is assigned
+  // when the person first enters Arbox (as a lead, or directly as a member), not
+  // when they join - so a long-standing lead who signs up today carries an old,
+  // low id, falls under any high-water mark, and is never welcomed at all. A
+  // silent miss, which is exactly the kind that goes unnoticed.
   const welcomed = new Set(state.welcomedUserIds || []);
-  const converted = await arbox.getAllConvertedLeads();
+  // Reads every active member, not just leads that went through a conversion
+  // event - someone added straight to Arbox as a member, with no lead record at
+  // all, used to be invisible to this check and never got welcomed. Nadav caught
+  // two such members in one day (2026-10-21).
+  const members = await arbox.getAllActiveMembers();
 
   // Same guard as the lost-lead check: a sudden jump in how many people we can
   // see means the query widened, not that they all joined today.
-  const unseen = converted.filter((c) => !welcomed.has(String(c.user_id))).length;
+  const unseen = members.filter((c) => !welcomed.has(String(c.user_id))).length;
   const isFirstRun = state.welcomedUserIds === undefined || unseen > 20;
   if (isFirstRun && unseen > 20) {
     console.log(`New members: ${unseen} unseen at once - recording silently rather than messaging them.`);
   }
 
-  for (const c of converted) {
+  for (const c of members) {
     if (welcomed.has(String(c.user_id))) continue;
     if (!isFirstRun && c.phone) {
-      // Converting a lead to a member is likewise Nadav's own doing.
       try {
-        await queueMessage(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name], {
-          deliberate: true,
-        });
+        const session = await nextBookedSessionForPhone(c.phone);
+        let sentWithSession = false;
+        if (session) {
+          // v3 adds the session; if it isn't approved yet (just submitted,
+          // 2026-10-21) this throws and falls through to the plain v2 welcome
+          // below rather than losing the welcome entirely.
+          try {
+            await queueMessage(
+              c.phone.replace("+", ""),
+              "welcome_new_member_v3",
+              [c.first_name, hebrewWhen(session.date), session.start_time || ""],
+              { deliberate: true }
+            );
+            sentWithSession = true;
+          } catch {}
+        }
+        if (!sentWithSession) {
+          await queueMessage(c.phone.replace("+", ""), "welcome_new_member_v2", [c.first_name], {
+            deliberate: true,
+          });
+        }
       } catch (e) {
         events.failure("מצטרף חדש", `ברכת הצטרפות ל${c.first_name || c.phone} נכשלה (${e.message.slice(0, 60)}) - ממשיך לבא בתור`);
       }
