@@ -37,11 +37,13 @@ const DAY_MS = 24 * HOUR_MS;
 // that has to reach everyone the same day) - Nadav raises these by hand in
 // Render for the day and brings them back down afterward. Unset, nothing
 // changes from the defaults below.
-// Raised temporarily (2026-10-20, Nadav's approval) to get one approved
-// same-day broadcast - a schedule change for tomorrow's power outage - out to
-// everyone today. Bring these back to 20/60 once that send is done.
-const MAX_PER_HOUR = Number(process.env.FUSE_MAX_PER_HOUR) || 150;
-const MAX_PER_DAY = Number(process.env.FUSE_MAX_PER_DAY) || 150;
+// Overridable for a one-off approved broadcast (e.g. an urgent schedule change
+// that has to reach everyone the same day) - Nadav raises these by hand in
+// Render for the day and brings them back down afterward. Unset, nothing
+// changes from the defaults below. Back to normal as of 2026-10-21: the
+// power-outage broadcast (2026-10-20) is done.
+const MAX_PER_HOUR = Number(process.env.FUSE_MAX_PER_HOUR) || 20;
+const MAX_PER_DAY = Number(process.env.FUSE_MAX_PER_DAY) || 60;
 
 function fuseState() {
   return store.getArboxState().fuse || {};
