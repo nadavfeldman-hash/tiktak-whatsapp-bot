@@ -77,4 +77,24 @@ function forLabel(label) {
   return { label, total: rows.length, counts, rows: rows.map((r) => ({ to: r.to, status: r.status, statusAt: r.statusAt, error: r.error || null })) };
 }
 
-module.exports = { recordOutgoing, recordStatus, forPhone, forLabel, _file: FILE };
+// Messages that did not reach the phone and nobody was told about yet: failed, or still only
+// accepted/sent after `minMinutes` (a phone that is on gets "delivered" within seconds).
+// Messages older than `maxHours` are left alone, so switching this on does not dig up the past.
+function undelivered({ minMinutes = 30, maxHours = 72, exclude = [] } = {}) {
+  const now = Date.now();
+  const skip = new Set(exclude.map(key));
+  return Object.values(read().messages).filter((m) => {
+    if (m.reported || skip.has(m.phone)) return false;
+    const age = now - Date.parse(m.at || m.statusAt || 0);
+    if (!(age <= maxHours * 3600e3)) return false;
+    if (m.status === "failed") return true;
+    return (m.status === "accepted" || m.status === "sent") && age >= minMinutes * 60e3;
+  });
+}
+function markReported(ids) {
+  const d = read();
+  for (const id of ids) if (d.messages[id]) d.messages[id].reported = new Date().toISOString();
+  write(d);
+}
+
+module.exports = { recordOutgoing, recordStatus, forPhone, forLabel, undelivered, markReported, _file: FILE };

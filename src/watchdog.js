@@ -76,13 +76,22 @@ async function run(monitor) {
     events.failure(s.name, s.failing || "לא רצה זמן רב מדי");
   }
 
-  const failed = recentFailedDeliveries(state.watchdogLastDeliveryCheck);
-  if (failed.length) {
-    const list = failed.slice(0, 5).map((f) => `${f.to}${f.error ? ` (${f.error})` : ""}`).join("\n");
-    lines.push(`📵 ${failed.length} הודעות לא הגיעו:\n${list}`);
-    for (const f of failed) {
-      events.record({ kind: "decision", automation: "מסירה", phone: f.to, outcome: "לא הגיע", reason: f.error || "נכשל" });
+  // חוק ברזל (Nadav, 24/10/2026): every message that did not reach a phone is reported to him by
+  // name/number, so he can find the person another way. Read from the permanent delivery log
+  // (src/delivery.js), not the short last-40 list: failed, or still not "delivered" after 30 minutes.
+  const delivery = require("./delivery");
+  const missed = delivery.undelivered({ minMinutes: 30, maxHours: 72, exclude: [process.env.ADMIN_PHONE || ""] });
+  if (missed.length) {
+    // names from what the bot already knows about members (phone -> name), last 9 digits
+    const names = {};
+    for (const v of Object.values(state.userStreaks || {})) if (v && v.phone && v.name) names[String(v.phone).replace(/\D/g, "").slice(-9)] = v.name;
+    const who = (m) => `${names[m.phone] || ""} 0${m.phone}`.trim();
+    const list = missed.slice(0, 15).map((m) => `${who(m)}${m.status === "failed" ? ` (נכשל${m.error ? `: ${m.error}` : ""})` : " (לא נמסר)"}${m.label ? ` [${m.label}]` : ""}`);
+    lines.push(`📵 ${missed.length} הודעות לא הגיעו לטלפון: ${list.join(" · ")}${missed.length > 15 ? " · ועוד" : ""}`);
+    for (const m of missed) {
+      events.record({ kind: "decision", automation: "מסירה", phone: m.to, outcome: "לא הגיע", reason: m.error || (m.status === "failed" ? "נכשל" : "לא נמסר תוך 30 דקות") });
     }
+    delivery.markReported(missed.map((m) => m.id));
   }
 
   store.setArboxState({
@@ -99,7 +108,13 @@ async function run(monitor) {
     try {
       await require("./whatsapp").sendText(admin, lines.join("\n\n"));
     } catch (e) {
-      console.error("Watchdog could not reach Nadav:", e.message);
+      // Free text reaches him only inside WhatsApp's 24-hour window; outside it, the approved
+      // announcement template (one line - template parameters cannot carry newlines).
+      try {
+        await require("./whatsapp").sendOwnerTemplate(admin, "general_announcement", [lines.join(" | ").replace(/\s*\n+\s*/g, " ").slice(0, 900)]);
+      } catch (e2) {
+        console.error("Watchdog could not reach Nadav:", e.message, "/", e2.message);
+      }
     }
   }
   return { alerts: lines.length };
