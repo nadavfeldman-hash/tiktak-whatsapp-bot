@@ -174,6 +174,10 @@ app.post("/webhook", async (req, res) => {
         }))
       );
       store.setArboxState({ ...state, deliveryStatus: recent.slice(-200) });
+      // and for good, per message and per phone (src/delivery.js)
+      for (const s of statuses) {
+        try { require("./delivery").recordStatus(s); } catch (e) { console.error("delivery log failed:", e.message); }
+      }
     }
 
     incoming = whatsapp.extractIncomingText(req.body);

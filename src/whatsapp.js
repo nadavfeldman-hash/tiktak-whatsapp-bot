@@ -84,6 +84,18 @@ function recordSent(to, templateName) {
   store.setArboxState({ ...state, sentTemplateLog: log });
 }
 
+
+// Keep the message id WhatsApp gave back, so its receipts can be matched later (src/delivery.js).
+async function trackOutgoing(res, to, label) {
+  try {
+    const j = typeof res.clone === "function" ? await res.clone().json() : null;
+    const id = j && j.messages && j.messages[0] && j.messages[0].id;
+    require("./delivery").recordOutgoing(id, to, label);
+  } catch (e) {
+    console.error("delivery tracking failed:", e.message);
+  }
+}
+
 async function sendText(to, body) {
   const res = await fetch(apiUrl(), {
     method: "POST",
@@ -103,6 +115,7 @@ async function sendText(to, body) {
     console.error("WhatsApp send failed:", res.status, errText);
     throw new Error(`WhatsApp send failed: ${res.status} ${errText}`);
   }
+  await trackOutgoing(res, to, "text");
   return res;
 }
 
@@ -183,6 +196,7 @@ async function sendTemplate(to, templateName, params = [], options = {}) {
   }
   recordSent(to, templateName);
   fuse.record();
+  await trackOutgoing(res, to, options.label || templateName);
   return res;
 }
 

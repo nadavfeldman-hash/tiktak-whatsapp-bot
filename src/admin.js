@@ -483,6 +483,8 @@ router.post("/broadcast/confirm", express.urlencoded({ extended: false }), requi
 
   res.redirect(`/admin/dashboard?broadcast=started&count=${job.recipients.length}#broadcast`);
 
+  // every broadcast gets a label, so /admin/delivery?label=... shows per person whether it reached the phone
+  const label = `broadcast:${new Date().toISOString().slice(0, 16)}`;
   (async () => {
     let sent = 0;
     for (const member of job.recipients) {
@@ -490,6 +492,7 @@ router.post("/broadcast/confirm", express.urlencoded({ extended: false }), requi
         await whatsapp.sendTemplate(member.phone.replace("+", ""), "general_announcement", [job.text], {
           deliberate: true,
           bulkApprovedByAdmin: true,
+          label,
         });
         sent++;
       } catch (e) {
@@ -499,6 +502,15 @@ router.post("/broadcast/confirm", express.urlencoded({ extended: false }), requi
     }
     console.log(`Broadcast finished: ${sent}/${job.recipients.length} sent.`);
   })();
+});
+
+// Did it reach the phone? ?phone=0501234567 -> every message to that number with its last receipt
+// (accepted / sent / delivered / read / failed); ?label=broadcast:... -> one send, per person.
+router.get("/delivery", requireAuth, (req, res) => {
+  const delivery = require("./delivery");
+  if (req.query.phone) return res.json({ phone: req.query.phone, messages: delivery.forPhone(req.query.phone) });
+  if (req.query.label) return res.json(delivery.forLabel(String(req.query.label)));
+  res.status(400).json({ error: "phone or label" });
 });
 
 router.get("/dashboard", requireAuth, async (req, res) => {
