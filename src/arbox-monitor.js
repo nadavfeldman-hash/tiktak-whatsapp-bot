@@ -749,6 +749,19 @@ async function checkLostLeads() {
   // event.
   const saidGoodbye = new Set(state.saidGoodbyeUserIds || []);
   const lost = await arbox.getAllLostLeads();
+  // Since the switch, leads are marked lost in TIKTAK's own dashboard (status "אבוד"/"ליד אבוד"), not in
+  // Arbox - those join the list here, with their name and phone from Arbox's leads-in-process report.
+  try {
+    const r = await fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/lead-statuses`, { signal: AbortSignal.timeout(15000) });
+    const lostIds = new Set(((await r.json()).statuses || []).filter((x) => /אבוד/.test(String(x.status || ""))).map((x) => String(x.user_id)));
+    if (lostIds.size) {
+      const inProcess = (await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" })).data || [];
+      const have = new Set(lost.map((c) => String(c.user_id)));
+      for (const l of inProcess) if (lostIds.has(String(l.user_id)) && !have.has(String(l.user_id))) lost.push({ user_id: l.user_id, first_name: l.first_name, phone: l.phone });
+    }
+  } catch (e) {
+    events.failure("ליד אבוד", `לא הצלחתי לקרוא את הסטטוסים מהמערכת של TIKTAK (${e.message.slice(0, 60)})`);
+  }
 
   // Widening the query from 50 records to all 515 would otherwise look like 465
   // people going lost at once, and message every one of them. Any jump this
