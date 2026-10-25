@@ -31,6 +31,7 @@ function getLeads(params = {}) {
 // rather than mistaking an empty Arbox calendar for "nobody came".
 const LEAGUE_URL = () => process.env.LEAGUE_URL || "https://tiktak-league.onrender.com";
 
+const ours_ = (path, params) => ours(path, params);
 async function ours(path, params) {
   const res = await fetch(`${LEAGUE_URL()}${path}?${new URLSearchParams(params)}`, {
     headers: { "x-api-key": process.env.ARBOX_API_KEY },
@@ -157,15 +158,27 @@ function getUser(userId) {
   return arboxRequest(`/v3/users/${userId}`);
 }
 
+// Arbox's active members, plus the ones who joined on TIKTAK's own site (Arbox never hears of them). If Arbox
+// doesn't answer (or once it is closed), TIKTAK's own copy of the whole list is used instead.
 async function getAllActiveMembers() {
+  let ours = null;
+  try { ours = (await ours_("/api/hooks/members", {})).data || []; } catch {}
   let members = [];
-  let page = 1;
-  while (true) {
-    const result = await getReport("activeMembersReport", { limit: 200, page });
-    members = members.concat(result.data || []);
-    if (!result.extra?.pagination?.next_page_url) break;
-    page++;
+  try {
+    let page = 1;
+    while (true) {
+      const result = await arboxReport("activeMembersReport", { limit: 200, page });
+      members = members.concat(result.data || []);
+      if (!result.extra?.pagination?.next_page_url) break;
+      page++;
+    }
+  } catch (e) {
+    if (ours && ours.length) return ours;
+    throw e;
   }
+  const tail = (p) => String(p || "").replace(/\D/g, "").slice(-9);
+  const have = new Set(members.map((m) => tail(m.phone)));
+  for (const m of ours || []) if (m.own && !have.has(tail(m.phone))) members.push(m);
   return members;
 }
 
