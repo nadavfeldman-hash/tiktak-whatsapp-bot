@@ -528,6 +528,11 @@ async function checkDueTasks() {
     limit: 200,
   });
   const tasks = result.data || [];
+  // tasks opened in TIKTAK's own dashboard since the switch (Arbox doesn't have them)
+  try {
+    const r = await fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/tasks`, { headers: { "x-api-key": process.env.ARBOX_API_KEY }, signal: AbortSignal.timeout(15000) });
+    if (r.ok) tasks.push(...((await r.json()).data || []));
+  } catch {}
   const now = new Date();
 
   const dueTasks = tasks.filter(
