@@ -1291,6 +1291,21 @@ async function checkLeadNoResponse() {
   const previousStatuses = state.leadStatusSnapshot || {};
   const result = await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" });
   const leads = result.data || [];
+  // Since 25/10 Nadav sets lead statuses in the TIKTAK dashboard (tiktak-league), and those never reach
+  // Arbox. Its hook lists them (Arbox public user_id + status); they win over Arbox's copy. If the hook
+  // can't be read this cycle, skip the cycle entirely - comparing half the picture would look like a
+  // status change (and send) or hide one.
+  let ours;
+  try {
+    const r = await fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/lead-statuses`, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(`status ${r.status}`);
+    ours = (await r.json()).statuses || [];
+  } catch (e) {
+    events.failure("שינוי סטטוס ליד", `לא הצלחתי לקרוא את הסטטוסים מהמערכת של TIKTAK (${String(e.message).slice(0, 60)}) - מדלג על הסבב`);
+    return;
+  }
+  const ourStatus = new Map(ours.map((o) => [String(o.user_id), o.status]));
+  leads.forEach((l) => { if (ourStatus.has(String(l.user_id))) l.lead_status = ourStatus.get(String(l.user_id)); });
   const currentStatuses = {};
   leads.forEach((l) => {
     currentStatuses[l.user_id] = l.lead_status;
