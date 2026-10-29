@@ -97,17 +97,21 @@ function getReport(reportName, params = {}) {
   }
   // 29/10: debts and declined charges of the payments TIKTAK charges itself, added to Arbox's (no member is in
   // both). Once Arbox is closed, or doesn't answer, TIKTAK's alone.
+  // Birthdays: Arbox's plus TIKTAK's (same phone once); TIKTAK's alone when Arbox doesn't answer.
+  if (reportName === "birthdayReport") return withOurs("/api/hooks/birthdays", { fromDate: params.fromDate || "", toDate: params.toDate || "" }, () => arboxReport(reportName, params), true);
   if (reportName === "debtReport") return withOurs("/api/hooks/debts", {}, () => arboxReport(reportName, params));
   if (reportName === "transactionsReport") return withOurs("/api/hooks/failed-payments", { fromDate: params.fromDate || "", toDate: params.toDate || "" }, () => arboxReport(reportName, params));
   return arboxReport(reportName, params);
 }
 
-async function withOurs(path, params, arboxRead) {
+async function withOurs(path, params, arboxRead, samePhoneOnce = false) {
   let mine = [];
   try { mine = (await ours(path, params)).data || []; } catch {}
   try {
     const r = await arboxRead();
-    return { ...r, data: [...(r.data || []), ...mine] };
+    const tail = (p) => String(p || "").replace(/\D/g, "").slice(-9);
+    const seen = new Set((r.data || []).map((x) => tail(x.phone)));
+    return { ...r, data: [...(r.data || []), ...mine.filter((x) => !samePhoneOnce || !seen.has(tail(x.phone)))] };
   } catch (e) {
     if (mine.length) return { data: mine };
     throw e;
