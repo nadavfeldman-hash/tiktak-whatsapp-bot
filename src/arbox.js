@@ -20,9 +20,21 @@ function getLocations() {
   return arboxRequest("/v3/locations");
 }
 
-function getLeads(params = {}) {
+// 29/10: leads live in TIKTAK's own system too (every Meta lead). Once the owner moves leads off Arbox
+// (TIKTAK's cutover step "leads_own"), they are read only from there; until then from Arbox, and from
+// TIKTAK only when Arbox doesn't answer - never both, or a lead would be welcomed twice.
+async function getLeads(params = {}) {
+  let mine = null;
+  try { mine = await ours("/api/hooks/leads", {}); } catch {}
+  const cut = (list) => ({ data: list.slice(0, Number(params.limit) || 200) });
+  if (mine && mine.own) return cut(mine.data || []);
   const query = new URLSearchParams(params).toString();
-  return arboxRequest(`/v3/leads${query ? `?${query}` : ""}`);
+  try {
+    return await arboxRequest(`/v3/leads${query ? `?${query}` : ""}`);
+  } catch (e) {
+    if (mine && (mine.data || []).length) return cut(mine.data);
+    throw e;
+  }
 }
 
 // Since the switch (24/10/2026) bookings, cancellations and the calendar live in TIKTAK's own system, not in
