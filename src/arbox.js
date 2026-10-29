@@ -95,7 +95,23 @@ function getReport(reportName, params = {}) {
   if (reportName === "bookingCancellationReport") {
     return merged("/api/hooks/cancellations", params, "fromDate", "toDate", (p) => arboxReport(reportName, p));
   }
+  // 29/10: debts and declined charges of the payments TIKTAK charges itself, added to Arbox's (no member is in
+  // both). Once Arbox is closed, or doesn't answer, TIKTAK's alone.
+  if (reportName === "debtReport") return withOurs("/api/hooks/debts", {}, () => arboxReport(reportName, params));
+  if (reportName === "transactionsReport") return withOurs("/api/hooks/failed-payments", { fromDate: params.fromDate || "", toDate: params.toDate || "" }, () => arboxReport(reportName, params));
   return arboxReport(reportName, params);
+}
+
+async function withOurs(path, params, arboxRead) {
+  let mine = [];
+  try { mine = (await ours(path, params)).data || []; } catch {}
+  try {
+    const r = await arboxRead();
+    return { ...r, data: [...(r.data || []), ...mine] };
+  } catch (e) {
+    if (mine.length) return { data: mine };
+    throw e;
+  }
 }
 
 function arboxReport(reportName, params = {}) {

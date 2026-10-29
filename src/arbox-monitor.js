@@ -632,8 +632,7 @@ async function checkFailedPayments() {
     seenThisRun.add(key);
 
     try {
-      const user = await arbox.getUser(t.user_id);
-      const phone = user.data?.phone;
+      const phone = t.own ? t.phone : (await arbox.getUser(t.user_id)).data?.phone;
       if (phone) {
         await queueMessage(phone.replace("+", ""), "failed_payment_reminder", [t.first_name]);
         await sleep(PACE_MS);
