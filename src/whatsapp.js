@@ -308,4 +308,5 @@ module.exports = {
   // So the approval queue can decline to list something that would be refused
   // at send time, and the panel never shows work that is not really there.
   wouldSkip: skipReason,
+  recordSent,
 };
