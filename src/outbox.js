@@ -259,35 +259,6 @@ function unapproveAutomation(automation) {
   return n;
 }
 
-// 30/10 Nadav: "אמרנו רק באפליקציה" - what the automations write to members (absence, late cancel, streak,
-// birthday, the new-member check-in) reaches them as a TIKTAK app notification, never on WhatsApp. Leads, trial
-// people and coaches have no app, so theirs stay on WhatsApp. A member without notifications gets nothing - the
-// app makes everyone allow them.
-const APP_ONLY = /^(absence_reminder_|streak_milestone|late_cancellation_callout|birthday_greeting_|new_member_checkin|failed_payment_reminder)/;
-const appOnly = (template) => APP_ONLY.test(String(template || ""));
-async function viaApp(m, item) {
-  const wa = require("./whatsapp");
-  if (wa.shadowMode()) return null;
-  // the same no-repeat rule as WhatsApp: the same words never twice in a row
-  const skip = wa.wouldSkip(m.to, m.template, { deliberate: true });
-  if (skip) return { app: true, skipped: skip };
-  let body = m.preview || (item && item.preview) || "";
-  if (!body) {
-    const bare = String(m.template).replace(/_v\d+$/, "");
-    const t = require("../templates.json").find((x) => x.name === m.template || x.name === bare);
-    body = t ? String(t.body).replace(/\{\{(\d+)\}\}/g, (s, n) => (m.params || [])[Number(n) - 1] ?? "") : "";
-  }
-  if (!body) throw new Error(`no text for ${m.template}`);
-  const url = `${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/push`;
-  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-api-key": process.env.ARBOX_API_KEY }, body: JSON.stringify({ phone: m.to, title: "TIKTAK", body }), signal: AbortSignal.timeout(20000) });
-  if (!r.ok) throw new Error(`TIKTAK push ${r.status}`);
-  const j = await r.json();
-  wa.recordSent(m.to, m.template);
-  require("./events").decision({ automation: m.automation || (item && item.automation) || "", person: m.personName || (item && item.personName) || "", phone: m.to,
-    outcome: j.sent ? "נשלח באפליקציה" : "לא נשלח", reason: j.sent ? "" : j.found ? "אין התראות באפליקציה" : "לא נמצא באפליקציה" });
-  return { app: true, ...j };   // handled either way: it never falls back to WhatsApp
-}
-
 // Drains everything approved. Called on a timer, so approving in the panel
 // returns immediately and the messages follow within a cycle.
 async function send() {
@@ -316,9 +287,7 @@ async function send() {
         const res =
           m.kind === "text"
             ? await whatsapp.sendText(m.to, m.body)
-            : appOnly(m.template)
-              ? await viaApp(m, item)
-              : await whatsapp.sendTemplate(m.to, m.template, m.params, { deliberate: true });
+            : await whatsapp.sendTemplate(m.to, m.template, m.params, { deliberate: true });
         if (res) {
           sent++;
           delivered++;
@@ -330,6 +299,7 @@ async function send() {
         await new Promise((r) => setTimeout(r, 1200));
       } catch (e) {
         blocked = true;
+        item.lastError = e.message;
         console.error(`Outbox: failed to send to ${m.to}:`, e.message);
       }
     }
@@ -346,6 +316,18 @@ async function send() {
       item.lastAttemptAt = new Date().toISOString();
       item.attempts = (item.attempts || 0) + 1;
       console.log(`Outbox: ${item.to} not sent yet (attempt ${item.attempts}) - staying in the queue.`);
+      // A hold (fuse/quiet-hours) is expected and resolves itself; a real,
+      // repeated API error (wrong params, rejected template) does not, and used
+      // to retry silently, invisibly, every ten seconds forever. One real error
+      // surviving two attempts (20s) is reported once, so it shows up the same
+      // place every other automation failure does - 2026-11-02, Nadav caught
+      // this by name only because he happened to ask about one specific person.
+      if (item.lastError && item.attempts === 2) {
+        require("./events").failure(
+          item.automation,
+          `${item.personName || item.to} לא נשלח (${item.lastError.slice(0, 80)}) - תקוע בתור`
+        );
+      }
       continue;
     }
     item.status = "sent";
