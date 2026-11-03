@@ -799,7 +799,12 @@ async function checkLostLeads() {
 }
 
 function isTrialRegistration(reg) {
-  return (reg.membership_type || "").includes("ניסיון");
+  const type = reg.membership_type || "";
+  // A real member always carries a membership type. Someone booked straight
+  // onto the schedule by staff (a lead, before any trial plan is purchased in
+  // Arbox) shows up with it blank - that is still a trial visitor, and missing
+  // this cost one in person this morning (Miri Hefetz, 2026-11-03).
+  return type.includes("ניסיון") || type.trim() === "";
 }
 
 async function findTrialRegistrations(dateStr) {
