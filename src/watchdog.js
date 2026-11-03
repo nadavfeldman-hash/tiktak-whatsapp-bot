@@ -57,6 +57,61 @@ function recentFailedDeliveries(sinceIso) {
   return all.filter((d) => d.status === "failed" && (!sinceIso || d.at > sinceIso));
 }
 
+// A second, independent check on top of checkTrialBookings/checkTrialReminders -
+// not a re-run of their logic, because their logic is exactly what has been
+// wrong before (first the absence reminders reading the wrong report, then
+// isTrialRegistration missing a blank membership_type - caught 2026-11-03 only
+// because Miri Hefetz had already trained and Nadav noticed by hand).
+//
+// This does not try to classify who is "really" a trial. It asks one ground-
+// truth question instead: is this person, booked onto today's or tomorrow's
+// schedule, in the real active-members list? If not, and they have received
+// no message of any kind in the last 3 days, somebody fell through whatever
+// the classifier currently is, known or not-yet-discovered. Flag them by name,
+// same day, instead of finding out after they already showed up uncontacted.
+async function unwelcomedVisitors() {
+  const arbox = require("./arbox");
+  const whatsapp = require("./whatsapp");
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const today = fmt(new Date());
+  const tomorrow = fmt(new Date(Date.now() + 86400000));
+
+  let activeMembers;
+  try {
+    activeMembers = await arbox.getAllActiveMembers();
+  } catch {
+    return []; // can't tell ground truth right now - say nothing rather than false-alarm
+  }
+  const activePhones = new Set(activeMembers.map((m) => String(m.phone || "").replace(/\D/g, "").slice(-9)));
+  const log = whatsapp.sentLog ? whatsapp.sentLog() : {};
+
+  const seen = new Map();
+  for (const dateStr of [today, tomorrow]) {
+    let result;
+    try {
+      result = await arbox.getSchedule({ from_date: dateStr, to_date: dateStr, limit: 200, registration_details: "1" });
+    } catch {
+      continue;
+    }
+    for (const session of result.data || []) {
+      for (const reg of session.registration_Details || []) {
+        if (reg.cancelled_time) continue;
+        const digits = String(reg.phone || "").replace(/\D/g, "").slice(-9);
+        if (digits.length < 8 || activePhones.has(digits)) continue;
+        const to = String(reg.phone || "").replace(/\D/g, "");
+        const RECENT_MS = 5 * 24 * 60 * 60 * 1000; // a stale welcome from months ago doesn't cover a new booking
+        const messagedRecently = Object.entries(log).some(
+          ([k, at]) => k.startsWith(`${to}:`) && Date.now() - new Date(at).getTime() < RECENT_MS
+        );
+        if (!messagedRecently && !seen.has(digits)) {
+          seen.set(digits, { name: reg.full_name || reg.name || "", phone: to, date: dateStr, session: session.session_name });
+        }
+      }
+    }
+  }
+  return Array.from(seen.values());
+}
+
 // Reported once each, not on every tick - an alert that repeats is an alert
 // people learn to swipe away.
 async function run(monitor) {
@@ -94,6 +149,17 @@ async function run(monitor) {
     delivery.markReported(missed.map((m) => m.id));
   }
 
+  const uncontacted = await unwelcomedVisitors().catch(() => []);
+  for (const v of uncontacted) {
+    const key = `uncontacted:${v.phone}:${v.date}`;
+    if (reported[key]) continue;
+    reported[key] = true;
+    lines.push(
+      `👀 ${v.name || ""} 0${v.phone.slice(-9)} רשום ל-${v.session || "אימון"} ב-${v.date}, לא מנוי פעיל ולא קיבל שום הודעה - תבדוק ידנית, כנראה חוסר בסיווג.`
+    );
+    events.failure("בדיקת תקינות", `לא זוהה כליד/ניסיון: ${v.name || v.phone}`);
+  }
+
   store.setArboxState({
     watchdogReported: reported,
     watchdogLastDeliveryCheck: new Date().toISOString(),
@@ -120,4 +186,4 @@ async function run(monitor) {
   return { alerts: lines.length };
 }
 
-module.exports = { run, silentAutomations, recentFailedDeliveries, SILENCE_HOURS };
+module.exports = { run, silentAutomations, recentFailedDeliveries, unwelcomedVisitors, SILENCE_HOURS };

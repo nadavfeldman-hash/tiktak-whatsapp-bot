@@ -309,4 +309,5 @@ module.exports = {
   // at send time, and the panel never shows work that is not really there.
   wouldSkip: skipReason,
   recordSent,
+  sentLog,
 };
