@@ -506,6 +506,11 @@ router.post("/broadcast/confirm", express.urlencoded({ extended: false }), requi
 
 // Did it reach the phone? ?phone=0501234567 -> every message to that number with its last receipt
 // (accepted / sent / delivered / read / failed); ?label=broadcast:... -> one send, per person.
+// 8/11 Nadav: the old-leads review reads every saved WhatsApp conversation (read-only, admin session)
+router.get("/conversations.json", requireAuth, (req, res) => {
+  res.json(store.getAllConversations());
+});
+
 router.get("/delivery", requireAuth, (req, res) => {
   const delivery = require("./delivery");
   if (req.query.phone) return res.json({ phone: req.query.phone, messages: delivery.forPhone(req.query.phone) });
