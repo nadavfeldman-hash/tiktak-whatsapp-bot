@@ -1291,6 +1291,11 @@ async function checkAbsences() {
 }
 
 const LEAD_NO_RESPONSE_TEMPLATES = ["lead_no_response_1_v3", "lead_no_response_2_v2", "lead_no_response_3_v4"];
+// how many {{n}} a template's approved body has - WhatsApp refuses a send whose count differs
+function templateVars(name) {
+  const t = TEMPLATES.find((x) => x.name === name);
+  return t ? new Set(String(t.body || "").match(/\{\{\d+\}\}/g) || []).size : 1;
+}
 
 // Arbox tracks follow-up attempts as sequential statuses: "ללא מענה 1", "ללא
 // מענה 2", "ללא מענה 3" - each stage should get its matching, progressively
@@ -1409,7 +1414,9 @@ async function checkLeadNoResponse() {
       result = await queueMessage(
         lead.phone.replace("+", ""),
         template,
-        [lead.first_name || ""],
+        // lead_no_response_3_v4 has no {{1}} - sending a name made WhatsApp refuse it (#132000), so
+        // every "ללא מענה 3" failed (שמעון, 8/11)
+        templateVars(template) ? [lead.first_name || ""] : [],
         { deliberate: true }
       );
     } catch (e) {
