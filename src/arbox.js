@@ -21,20 +21,30 @@ function getLocations() {
 }
 
 // 29/10: leads live in TIKTAK's own system too (every Meta lead). Once the owner moves leads off Arbox
-// (TIKTAK's cutover step "leads_own"), they are read only from there; until then from Arbox, and from
-// TIKTAK only when Arbox doesn't answer - never both, or a lead would be welcomed twice.
+// (TIKTAK's cutover step "leads_own"), they are read only from there; until then from Arbox plus every
+// TIKTAK lead Arbox doesn't have (matched by phone, so nobody is welcomed twice).
 async function getLeads(params = {}) {
   let mine = null;
   try { mine = await ours("/api/hooks/leads", {}); } catch {}
   const cut = (list) => ({ data: list.slice(0, Number(params.limit) || 200) });
   if (mine && mine.own) return cut(mine.data || []);
   const query = new URLSearchParams(params).toString();
+  let theirs;
   try {
-    return await arboxRequest(`/v3/leads${query ? `?${query}` : ""}`);
+    theirs = await arboxRequest(`/v3/leads${query ? `?${query}` : ""}`);
   } catch (e) {
     if (mine && (mine.data || []).length) return cut(mine.data);
     throw e;
   }
+  // 8/11: Meta leads stopped reaching Arbox (שירונה, 17:03) and live only in TIKTAK's system, so reading
+  // Arbox alone meant a new lead got no welcome at all. Add every TIKTAK lead Arbox doesn't have - same
+  // phone counts once (Arbox's copy kept), so nobody is welcomed twice.
+  const key = (p) => String(p || "").replace(/\D/g, "").slice(-9);
+  const known = new Set((theirs.data || []).map((l) => key(l.phone)).filter(Boolean));
+  const extra = ((mine && mine.data) || []).filter((l) => key(l.phone) && !known.has(key(l.phone)));
+  if (!extra.length) return theirs;
+  const at = (l) => new Date(l.created_time || 0).getTime() || 0;
+  return { ...theirs, data: cut([...(theirs.data || []), ...extra].sort((a, b) => at(b) - at(a))).data };
 }
 
 // Since the switch (24/10/2026) bookings, cancellations and the calendar live in TIKTAK's own system, not in
