@@ -254,6 +254,8 @@ async function findContactByPhone(phone) {
 }
 
 module.exports = {
+  // 12/11: every lead in TIKTAK's own system with its current status (src/server.js /api/hooks/leads)
+  ownLeads: () => ours("/api/hooks/leads", {}),
   findContactByPhone,
   getLocations,
   getLeads,

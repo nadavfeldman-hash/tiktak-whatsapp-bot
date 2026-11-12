@@ -1333,6 +1333,25 @@ async function checkLeadNoResponse() {
   }
   const ourStatus = new Map(ours.map((o) => [String(o.user_id), o.status]));
   leads.forEach((l) => { if (ourStatus.has(String(l.user_id))) l.lead_status = ourStatus.get(String(l.user_id)); });
+  // 12/11 (שמריה, "ללא מענה 1" and nothing went out): leads that exist only in TIKTAK's system - the
+  // WhatsApp-status leads, Meta leads that never reached Arbox - were never in this list, so no status
+  // Nadav gave them could send anything. They join it now, keyed "own-<id>" so they can never collide with
+  // an Arbox user_id; a phone Arbox already has counts once (Arbox's copy). Unreadable = skip the cycle, the
+  // same rule as the statuses above: a lead missing for one cycle would come back as a "first sighting".
+  try {
+    const mine = ((await arbox.ownLeads()) || {}).data || [];
+    const k9 = (p) => String(p || "").replace(/\D/g, "").slice(-9);
+    const known = new Set(leads.map((l) => k9(l.phone)).filter((k) => k.length === 9));
+    for (const o of mine) {
+      const k = k9(o.phone);
+      if (k.length !== 9 || known.has(k)) continue;
+      known.add(k);
+      leads.push({ user_id: `own-${o.id}`, first_name: o.first_name || "", phone: o.phone, lead_status: o.lead_status });
+    }
+  } catch (e) {
+    events.failure("שינוי סטטוס ליד", `לא הצלחתי לקרוא את הלידים מהמערכת של TIKTAK (${String(e.message).slice(0, 60)}) - מדלג על הסבב`);
+    return;
+  }
   const currentStatuses = {};
   leads.forEach((l) => {
     currentStatuses[l.user_id] = l.lead_status;
