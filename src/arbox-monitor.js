@@ -413,13 +413,27 @@ async function checkNewLeads() {
   const result = await arbox.getLeads({ limit: 20, sort: "desc" });
   const leads = result.data || [];
 
+  // 15/11: טלי (14/11 17:03) got no welcome - אמיר came in the same minute, the check saw him first and
+  // saved "17:03", and "created after 17:03" is false for 17:03. A lead is now new by WHO it is (its id,
+  // remembered), not by its clock: anything from the last 2 hours before the last check that we have not
+  // seen yet counts, so two leads in one minute, or one that shows up a little late, are both welcomed.
+  const leadKey = (l) => String(l.user_id || l.id || String(l.phone || "").replace(/\D/g, "").slice(-9) || "");
+  const seenList = Array.isArray(state.seenLeadIds) ? state.seenLeadIds : null;
+  const seen = new Set(seenList || []);
+  const windowStart = new Date(since.getTime() - 2 * 3600 * 1000);
+
   // Leads come back newest-first; walk oldest-to-newest so alerts arrive in order.
   const newLeads = leads
-    .filter((lead) => lead.created_time && new Date(lead.created_time) > since)
+    .filter((lead) => lead.created_time && new Date(lead.created_time) >= windowStart)
+    .filter((lead) => leadKey(lead) && !seen.has(leadKey(lead)))
     .reverse();
 
+  // First run with the memory: everything already in the list is history - remember it, message no one.
+  const seedOnly = isFirstRun || !seenList;
+
   for (const lead of newLeads) {
-    if (isFirstRun) break; // don't spam alerts for existing history on first run ever
+    seen.add(leadKey(lead));
+    if (seedOnly) continue; // don't spam alerts for existing history
     await whatsapp.sendOwnerTemplate(ADMIN_PHONE, "owner_new_lead_alert", leadAlertParams(lead));
 
     // Same go-live rule as every other automation: only leads created after we
@@ -443,7 +457,9 @@ async function checkNewLeads() {
     return t && t > max ? t : max;
   }, since);
 
-  store.setArboxState({ lastLeadCheckTime: latestTime.toISOString() });
+  // Seeding also remembers every lead in the list, not just the recent window.
+  if (seedOnly) leads.forEach((l) => leadKey(l) && seen.add(leadKey(l)));
+  store.setArboxState({ lastLeadCheckTime: latestTime.toISOString(), seenLeadIds: [...seen].slice(-500) });
 }
 
 const DEBT_REPORT_HOUR = 9; // sends once, the first time the monitor runs at/after this local hour each day
