@@ -107,16 +107,19 @@ function trip(reason) {
 // Best effort, and never allowed to throw: if warning Nadav fails, the fuse must
 // still hold. Sent as plain text rather than a template so it cannot itself be
 // stopped by the very thing it is reporting.
+// 22/11 Nadav ("שלא יקרה יותר"): the fuse tripped at 14:58 and he only found out an hour later, by noticing
+// leads he had moved to "ללא מענה" never got a message - the WhatsApp text alone got lost in his regular
+// chat traffic. A second, distinct channel (our own app push) alongside it, so a trip is hard to miss.
 function notifyAdmin(reason) {
   const admin = process.env.ADMIN_PHONE;
   if (!admin) return;
-  const whatsapp = require("./whatsapp");
-  whatsapp
-    .sendText(
-      admin,
-      `🛑 עצרתי את כל ההודעות האוטומטיות.\nהסיבה: ${reason}.\nזה חריג ולא אמור לקרות ביום רגיל - כנראה יש תקלה.\nכלום לא ייצא עד שתאפס בפאנל.`
-    )
-    .catch(() => {});
+  const text = `🛑 עצרתי את כל ההודעות האוטומטיות.\nהסיבה: ${reason}.\nזה חריג ולא אמור לקרות ביום רגיל - כנראה יש תקלה.\nכלום לא ייצא עד שתאפס בפאנל.`;
+  require("./whatsapp").sendText(admin, text).catch(() => {});
+  fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/push`, {
+    method: "POST", headers: { "content-type": "application/json", "x-api-key": process.env.ARBOX_API_KEY },
+    body: JSON.stringify({ phone: admin, title: "🛑 הנתיך קפץ - הודעות נעצרו", body: reason }),
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => {});
 }
 
 // Called after a send actually succeeds.
