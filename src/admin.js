@@ -511,6 +511,14 @@ router.get("/conversations.json", requireAuth, (req, res) => {
   res.json(store.getAllConversations());
 });
 
+router.post("/send-raw", express.json(), requireAuth, async (req, res) => {
+  try {
+    const r = await require("./whatsapp").sendText(String(req.body.to || ""), String(req.body.text || ""));
+    const body = await r.clone().json().catch(() => null);
+    res.json({ ok: true, status: r.status, body });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 router.get("/delivery", requireAuth, (req, res) => {
   const delivery = require("./delivery");
   if (req.query.phone) return res.json({ phone: req.query.phone, messages: delivery.forPhone(req.query.phone) });
