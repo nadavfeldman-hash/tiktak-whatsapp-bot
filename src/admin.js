@@ -354,6 +354,16 @@ router.post("/reset-fuse", requireAuth, (req, res) => {
   res.redirect("/admin/dashboard?fuse=reset#automations");
 });
 
+// Temp, 23/11: a one-off real message to a non-member (Arbox's own support WhatsApp), with the
+// actual WhatsApp API response body (message id) so we can confirm it was really accepted.
+router.post("/send-raw", express.json(), requireAuth, async (req, res) => {
+  try {
+    const r = await require("./whatsapp").sendText(String(req.body.to || ""), String(req.body.text || ""));
+    const body = await r.clone().json().catch(() => null);
+    res.json({ ok: true, status: r.status, body });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // Shadow mode: the automations run and decide as normal, and every message they
 // decide on is written to the log instead of being sent. Any change worth being
 // careful about should spend a day here first.
