@@ -1,4 +1,4 @@
-// Nothing reaches a customer that Nadav has not looked at and approved.
+﻿// Nothing reaches a customer that Nadav has not looked at and approved.
 //
 // Until now each of the seventeen checks both decided who qualified and sent to
 // them, in the same breath. That is why every mistake in a decision became a
@@ -279,7 +279,7 @@ async function viaApp(m, item) {
   }
   if (!body) throw new Error(`no text for ${m.template}`);
   const url = `${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/push`;
-  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-api-key": process.env.ARBOX_API_KEY }, body: JSON.stringify({ phone: m.to, title: "TIKTAK", body }), signal: AbortSignal.timeout(20000) });
+  const r = await fetch(url, { method: "POST", headers: require("./arbox").leagueHeaders({ "content-type": "application/json" }), body: JSON.stringify({ phone: m.to, title: "TIKTAK", body }), signal: AbortSignal.timeout(20000) });
   if (!r.ok) throw new Error(`TIKTAK push ${r.status}`);
   const j = await r.json();
   wa.recordSent(m.to, m.template);

@@ -546,7 +546,7 @@ async function checkDueTasks() {
   const tasks = result.data || [];
   // tasks opened in TIKTAK's own dashboard since the switch (Arbox doesn't have them)
   try {
-    const r = await fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/tasks`, { headers: { "x-api-key": process.env.ARBOX_API_KEY }, signal: AbortSignal.timeout(15000) });
+    const r = await fetch(`${arbox.LEAGUE_URL()}/api/hooks/tasks`, { headers: arbox.leagueHeaders(), signal: AbortSignal.timeout(15000) });
     if (r.ok) tasks.push(...((await r.json()).data || []));
   } catch {}
   const now = new Date();
@@ -768,20 +768,8 @@ async function checkLostLeads() {
   // not the highest id seen, because the list is unordered and ids predate the
   // event.
   const saidGoodbye = new Set(state.saidGoodbyeUserIds || []);
+  // 27/11: lost = status "אבוד" in TIKTAK's own dashboard, read from our system only (Arbox is gone).
   const lost = await arbox.getAllLostLeads();
-  // Since the switch, leads are marked lost in TIKTAK's own dashboard (status "אבוד"/"ליד אבוד"), not in
-  // Arbox - those join the list here, with their name and phone from Arbox's leads-in-process report.
-  try {
-    const r = await fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/lead-statuses`, { signal: AbortSignal.timeout(15000) });
-    const lostIds = new Set(((await r.json()).statuses || []).filter((x) => /אבוד/.test(String(x.status || ""))).map((x) => String(x.user_id)));
-    if (lostIds.size) {
-      const inProcess = (await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" })).data || [];
-      const have = new Set(lost.map((c) => String(c.user_id)));
-      for (const l of inProcess) if (lostIds.has(String(l.user_id)) && !have.has(String(l.user_id))) lost.push({ user_id: l.user_id, first_name: l.first_name, phone: l.phone });
-    }
-  } catch (e) {
-    events.failure("ליד אבוד", `לא הצלחתי לקרוא את הסטטוסים מהמערכת של TIKTAK (${e.message.slice(0, 60)})`);
-  }
 
   // Widening the query from 50 records to all 515 would otherwise look like 465
   // people going lost at once, and message every one of them. Any jump this
@@ -1332,38 +1320,11 @@ async function checkLeadNoResponse() {
   const notifiedKeys = new Set(state.notifiedLeadNoResponseKeys || []);
 
   const previousStatuses = state.leadStatusSnapshot || {};
-  const result = await arbox.getReport("leadsInProcessReport", { limit: 200, group_by: "user" });
-  const leads = result.data || [];
-  // Since 25/10 Nadav sets lead statuses in the TIKTAK dashboard (tiktak-league), and those never reach
-  // Arbox. Its hook lists them (Arbox public user_id + status); they win over Arbox's copy. If the hook
-  // can't be read this cycle, skip the cycle entirely - comparing half the picture would look like a
-  // status change (and send) or hide one.
-  let ours;
+  // 27/11: every lead and the status Nadav set, from TIKTAK's own system only (Arbox is gone). Unreadable =
+  // skip the cycle: comparing half the picture would look like a status change (and send) or hide one.
+  let leads;
   try {
-    const r = await fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/lead-statuses`, { signal: AbortSignal.timeout(15000) });
-    if (!r.ok) throw new Error(`status ${r.status}`);
-    ours = (await r.json()).statuses || [];
-  } catch (e) {
-    events.failure("שינוי סטטוס ליד", `לא הצלחתי לקרוא את הסטטוסים מהמערכת של TIKTAK (${String(e.message).slice(0, 60)}) - מדלג על הסבב`);
-    return;
-  }
-  const ourStatus = new Map(ours.map((o) => [String(o.user_id), o.status]));
-  leads.forEach((l) => { if (ourStatus.has(String(l.user_id))) l.lead_status = ourStatus.get(String(l.user_id)); });
-  // 12/11 (שמריה, "ללא מענה 1" and nothing went out): leads that exist only in TIKTAK's system - the
-  // WhatsApp-status leads, Meta leads that never reached Arbox - were never in this list, so no status
-  // Nadav gave them could send anything. They join it now, keyed "own-<id>" so they can never collide with
-  // an Arbox user_id; a phone Arbox already has counts once (Arbox's copy). Unreadable = skip the cycle, the
-  // same rule as the statuses above: a lead missing for one cycle would come back as a "first sighting".
-  try {
-    const mine = ((await arbox.ownLeads()) || {}).data || [];
-    const k9 = (p) => String(p || "").replace(/\D/g, "").slice(-9);
-    const known = new Set(leads.map((l) => k9(l.phone)).filter((k) => k.length === 9));
-    for (const o of mine) {
-      const k = k9(o.phone);
-      if (k.length !== 9 || known.has(k)) continue;
-      known.add(k);
-      leads.push({ user_id: `own-${o.id}`, first_name: o.first_name || "", phone: o.phone, lead_status: o.lead_status });
-    }
+    leads = (await arbox.getReport("leadsInProcessReport")).data || [];
   } catch (e) {
     events.failure("שינוי סטטוס ליד", `לא הצלחתי לקרוא את הלידים מהמערכת של TIKTAK (${String(e.message).slice(0, 60)}) - מדלג על הסבב`);
     return;

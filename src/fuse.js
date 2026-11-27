@@ -1,4 +1,4 @@
-// A fuse in front of every outgoing template, sitting underneath all the
+﻿// A fuse in front of every outgoing template, sitting underneath all the
 // per-automation logic.
 //
 // Every incident this bot has caused has had the same shape: some check decided
@@ -115,8 +115,8 @@ function notifyAdmin(reason) {
   if (!admin) return;
   const text = `🛑 עצרתי את כל ההודעות האוטומטיות.\nהסיבה: ${reason}.\nזה חריג ולא אמור לקרות ביום רגיל - כנראה יש תקלה.\nכלום לא ייצא עד שתאפס בפאנל.`;
   require("./whatsapp").sendText(admin, text).catch(() => {});
-  fetch(`${process.env.LEAGUE_URL || "https://tiktak-league.onrender.com"}/api/hooks/push`, {
-    method: "POST", headers: { "content-type": "application/json", "x-api-key": process.env.ARBOX_API_KEY },
+  fetch(`${require("./arbox").LEAGUE_URL()}/api/hooks/push`, {
+    method: "POST", headers: require("./arbox").leagueHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ phone: admin, title: "🛑 הנתיך קפץ - הודעות נעצרו", body: reason }),
     signal: AbortSignal.timeout(10000),
   }).catch(() => {});
